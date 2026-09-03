@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "id": "davedes.workspace-restorer",
-  "name": "Workspace Restorer",
-  "version": "1.1.1",
-  "author": "Davedes",
+  "id": "io.github.dreed47.session-restore",
+  "name": "Session Restore",
+  "version": "2.0.0",
+  "author": "David Reed",
   "license": "MIT",
-  "description": "Snapshot and restore Hyprland workspace layouts as named profiles.",
+  "description": "Save your open apps and window layout, and reopen them automatically after a reboot.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Workspace Restorer",
-    "description": "Snapshot and restore workspace layouts",
+    "displayName": "Session Restore",
+    "description": "Save the current apps and layout; restore on demand or on login",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

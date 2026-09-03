@@ -1,11 +1,17 @@
 {
-  "name": "workspace-restorer",
-  "version": "1.1.1",
-  "description": "Snapshot and restore Hyprland workspace layouts as named profiles.",
+  "name": "omarchy-session-restore",
+  "version": "2.0.0",
+  "description": "Save your open apps and window layout, and reopen them automatically after a reboot. Omarchy shell plugin for Hyprland.",
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "validate": "node scripts/validate-manifest.mjs",
+    "check": "node --check restoreLogic.mjs && node scripts/validate-manifest.mjs && node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dreed47/omarchy-session-restore.git"
   },
   "engines": {
     "node": ">=18"

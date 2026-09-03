@@ -9,14 +9,14 @@ import qs.Ui
 Panel {
     id: root
 
-    moduleName: "davedes.workspace-restorer"
-    ipcTarget: "workspace-restorer"
+    moduleName: "io.github.dreed47.session-restore"
+    ipcTarget: "session-restore"
 
     property var profiles: []
     property bool isSnapshotting: false
     property bool isRestoring: false
     property string lastAction: ""
-    property string profileDir: Quickshell.env("HOME") + "/.config/omarchy/workspace-restorer"
+    property string profileDir: Quickshell.env("HOME") + "/.config/omarchy/session-restore"
     property var pendingSnapshot: null
     property bool showingNameInput: false
     property var monitorMap: ({})
@@ -47,7 +47,7 @@ Panel {
     }
 
     function notify(summary, body) {
-        Quickshell.execDetached(["notify-send", "-a", "Workspace Restorer", "-i", "preferences-desktop-workspaces", summary, body || ""])
+        Quickshell.execDetached(["notify-send", "-a", "Session Restore", "-i", "preferences-desktop-workspaces", summary, body || ""])
     }
 
     // Return a valid, safe profile filename (without the .json suffix) or null.
@@ -330,7 +330,7 @@ Panel {
             visible: !root.showingNameInput
 
             PanelHero {
-                title: root.isRestoring ? "Restoring..." : "Workspace Restorer"
+                title: root.isRestoring ? "Restoring..." : "Session Restore"
             }
 
             Rectangle {

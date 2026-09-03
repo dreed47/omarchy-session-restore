@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.0] - unreleased
+
+Fork of [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
+by Davedes83, renamed to **Session Restore**.
+
+### Changed
+
+- Plugin renamed: id `davedes.workspace-restorer` -> `io.github.dreed47.session-restore`,
+  display name "Workspace Restorer" -> "Session Restore".
+- Profile storage moved: `~/.config/omarchy/workspace-restorer/` ->
+  `~/.config/omarchy/session-restore/`. Existing profiles are not migrated
+  automatically; copy the directory across if you are coming from the
+  upstream plugin.
+
+### Planned in this line
+
+- Automatic session restore after a reboot / login via an Omarchy `post-boot`
+  hook, with a designated "boot profile".
+- Standalone `bin/session-restore` CLI so restore does not depend on the
+  shell being up.
+- Bar-panel controls: pin boot profile, toggle restore-on-login, update boot
+  profile from the current layout.
+
 ## [1.1.1] - 2026-08-30
 
 ### Security hardening for browser tab capture

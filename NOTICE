@@ -1,0 +1,17 @@
+omarchy-session-restore
+=======================
+
+This project is a fork of "Workspace Restorer" by Davedes83:
+https://github.com/Davedes83/workspace-restorer
+
+The original project is licensed under the MIT License (see LICENSE).
+The snapshot/restore engine, the browser tab-capture helper
+(scripts/capture_tabs.py), and the pure helpers in restoreLogic.mjs
+originate from that project.
+
+Changes in this fork:
+- Renamed the plugin to "Session Restore"
+  (id: io.github.dreed47.session-restore).
+- Adds automatic session restore after a reboot / login, driven by an
+  Omarchy post-boot hook, with a designated "boot profile".
+- Profile storage moved to ~/.config/omarchy/session-restore/.
