@@ -86,7 +86,20 @@ omarchy restart shell
 - [Omarchy](https://omarchy.org/) Linux
 - Hyprland compositor
 - Quickshell (the Omarchy shell framework)
+- `node` >= 18 (the restore engine) - `omarchy pkg add nodejs`
 - `python3` (browser tab capture)
+
+### Command-line use
+
+The engine is also a standalone CLI, handy for scripts and the login hook:
+
+```bash
+bin/session-restore save coding        # capture the current layout
+bin/session-restore restore coding     # reopen it
+bin/session-restore list               # * marks the boot profile
+bin/session-restore boot-profile coding
+bin/session-restore restore --boot     # what the post-boot hook runs
+```
 
 ## Development
 

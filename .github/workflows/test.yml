@@ -26,8 +26,14 @@ jobs:
       - name: Run unit tests
         run: npm test
 
-      - name: Helper module parses
-        run: node --check restoreLogic.mjs
+      - name: Sources parse
+        run: |
+          node --check restoreLogic.mjs
+          node --check lib/io.mjs
+          node --check bin/session-restore
+
+      - name: CLI --help works
+        run: node bin/session-restore --help
 
       - name: Validate manifest.json
         run: node scripts/validate-manifest.mjs

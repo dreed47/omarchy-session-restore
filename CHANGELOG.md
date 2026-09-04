@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file.
 Fork of [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
 by Davedes83, renamed to **Session Restore**.
 
+### Added
+
+- Standalone `bin/session-restore` CLI (Node) - the single snapshot/restore
+  engine. Subcommands: `save`, `restore`, `list`, `delete`, `boot-profile`,
+  plus `restore --boot` / `save --boot` for the login path and `--dry-run` to
+  print the restore script without running it. This is what the post-boot
+  hook will call, so login restore does not depend on the shell being up.
+- Pure builders extracted into `restoreLogic.mjs` and unit-tested:
+  `assembleWindows`, `buildSnapshot`, `buildRestoreScript`, `wrapRestoreRunner`,
+  `resolveBrowserProfile`, `procInfoScript` / `parseProcInfo`,
+  `tabCaptureInvocations` / `parseTabResults` / `attachTabs`, `bootMarkerPath`.
+- `.boot-profile` marker file (in the profile dir) naming the profile to
+  restore on login.
+
 ### Changed
 
 - Plugin renamed: id `davedes.workspace-restorer` -> `io.github.dreed47.session-restore`,
@@ -15,13 +29,13 @@ by Davedes83, renamed to **Session Restore**.
   `~/.config/omarchy/session-restore/`. Existing profiles are not migrated
   automatically; copy the directory across if you are coming from the
   upstream plugin.
+- New runtime requirement: `node` (>= 18) for the restore engine.
 
 ### Planned in this line
 
-- Automatic session restore after a reboot / login via an Omarchy `post-boot`
-  hook, with a designated "boot profile".
-- Standalone `bin/session-restore` CLI so restore does not depend on the
-  shell being up.
+- `BarWidget.qml` to call `bin/session-restore` instead of carrying its own
+  copy of the snapshot/restore logic.
+- Login trigger: `post-boot` hook install script + `restore-on-login.sh`.
 - Bar-panel controls: pin boot profile, toggle restore-on-login, update boot
   profile from the current layout.
 
