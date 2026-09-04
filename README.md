@@ -14,8 +14,9 @@ back — on demand, or **automatically after a reboot**.
   position, size, floating/fullscreen state, working directory, and browser tabs
 - **Restore on demand** — Re-launch missing apps directly onto the workspace
   they were on; move already-running windows back into place
-- **Restore after reboot** *(2.x)* — Pin one profile as the *boot profile* and
-  have it reopen automatically a few seconds after you log in
+- **Restore after reboot** — Name one profile as the *boot profile* and it
+  reopens automatically a few seconds after you log in (once per login, not on
+  a mid-session shell restart)
 - **Conflict detection** — Avoids duplicate spawns; repositions existing windows
   instead of relaunching them
 - **Desktop notifications** — Feedback on save / restore / delete
@@ -61,12 +62,30 @@ omarchy restart shell
 4. Click a profile name to restore that layout
 5. Click the delete action to remove a profile
 
-### Restore after reboot *(2.x)*
+### Restore after reboot
 
-1. Pin a profile as the boot profile (star toggle on the profile row)
-2. Turn on **Restore on login** — this installs an Omarchy `post-boot` hook
-3. On the next login the boot profile is restored automatically once Hyprland
-   has settled
+Pick the profile to bring back at login (the *boot profile*):
+
+```bash
+bin/session-restore boot-profile coding
+```
+
+That's the whole switch. The plugin's `service` half runs a few seconds after
+each login and restores that profile — once. It does **not** re-fire when the
+shell is merely restarted mid-session: it checks that the compositor came up
+moments ago and drops a once-per-session stamp in `$XDG_RUNTIME_DIR`.
+
+Clear it with `bin/session-restore boot-profile --clear`.
+
+> A bar-panel toggle for this (pin star + "restore on login" switch) is coming;
+> for now it's the CLI.
+
+To test the login path without logging out:
+
+```bash
+rm -f "$XDG_RUNTIME_DIR/session-restore/applied"
+omarchy-shell session-restore.service applyLogin      # or: SESSION_RESTORE_BOOT_WINDOW=99999 bin/session-restore restore --boot
+```
 
 ## How it works
 
@@ -80,6 +99,21 @@ omarchy restart shell
   starting the app — so each opens directly where it belongs
 - A detached safety pass re-checks spawned windows and corrects any that ignore
   the focused workspace, without delaying the restore notification
+
+## Limitations
+
+The **tiled arrangement inside a workspace is not restored** - which window sits
+left/right/top/bottom of which, and the split ratios between them. Tiled windows
+are launched back onto their workspace and land wherever dwindle puts them.
+
+This is deferred, not merely unbuilt: doing it properly needs Hyprland to expose
+the dwindle split tree + ratios, which it does not yet
+([hyprwm/Hyprland#13035](https://github.com/hyprwm/Hyprland/discussions/13035)).
+See [docs/tiled-layout-restore.md](docs/tiled-layout-restore.md) for the full
+rationale and the trigger condition for building it.
+
+Restored today: workspace, monitor, floating position/size, fullscreen, browser
+tabs, and relaunching whatever is missing.
 
 ## Requirements
 

@@ -12,6 +12,9 @@ import {
     buildRestoreScript,
     wrapRestoreRunner,
     bootMarkerPath,
+    parseEtimes,
+    isFreshLogin,
+    bootAppliedMarkerPath,
 } from "../restoreLogic.mjs"
 
 const HOME = "/home/user"
@@ -223,4 +226,36 @@ test("wrapRestoreRunner creates a private temp dir and runs the script", () => {
 
 test("bootMarkerPath is a dotfile inside the profile dir", () => {
     assert.equal(bootMarkerPath(DIR), DIR + "/.boot-profile")
+})
+
+// --- login guards ---
+
+test("parseEtimes reads a plain seconds count", () => {
+    assert.equal(parseEtimes("  42\n"), 42)
+    assert.equal(parseEtimes("0"), 0)
+})
+
+test("parseEtimes returns null for anything non-numeric", () => {
+    assert.equal(parseEtimes(""), null)
+    assert.equal(parseEtimes("12:34"), null)   // ps etime (not etimes) format
+    assert.equal(parseEtimes("  "), null)
+    assert.equal(parseEtimes(null), null)
+    assert.equal(parseEtimes(undefined), null)
+})
+
+test("isFreshLogin: young compositor is a login, old one is not", () => {
+    assert.equal(isFreshLogin(10, 120), true)
+    assert.equal(isFreshLogin(120, 120), true)
+    assert.equal(isFreshLogin(121, 120), false)
+    assert.equal(isFreshLogin(99999, 120), false)
+})
+
+test("isFreshLogin: unknown age is treated as a login", () => {
+    assert.equal(isFreshLogin(null, 120), true)
+    assert.equal(isFreshLogin(undefined, 120), true)
+})
+
+test("bootAppliedMarkerPath lives under the runtime dir", () => {
+    assert.equal(bootAppliedMarkerPath("/run/user/1000"), "/run/user/1000/session-restore/applied")
+    assert.equal(bootAppliedMarkerPath("/run/user/1000/"), "/run/user/1000/session-restore/applied")
 })

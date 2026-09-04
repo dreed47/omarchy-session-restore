@@ -6,9 +6,11 @@
   "author": "David Reed",
   "license": "MIT",
   "description": "Save your open apps and window layout, and reopen them automatically after a reboot.",
-  "kinds": ["bar-widget"],
+  "kinds": ["bar-widget", "service"],
+  "keepLoaded": true,
   "entryPoints": {
-    "barWidget": "BarWidget.qml"
+    "barWidget": "BarWidget.qml",
+    "service": "Service.qml"
   },
   "barWidget": {
     "displayName": "Session Restore",

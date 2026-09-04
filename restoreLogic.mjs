@@ -595,3 +595,33 @@ export function bootMarkerPath(profileDir) {
     return profileDir + "/.boot-profile"
 }
 
+// ---------------------------------------------------------------------------
+// Login-trigger guards (pure). The `service` entry point pokes
+// `session-restore restore --boot` on every shell start; these decide whether
+// that start is actually a fresh login worth acting on.
+// ---------------------------------------------------------------------------
+
+// Seconds from `ps -o etimes= -p <pid>` output (leading/trailing space, digits).
+// Returns a non-negative integer, or null if it cannot be read.
+export function parseEtimes(s) {
+    if (typeof s !== "string") return null
+    var t = s.trim()
+    if (!/^[0-9]+$/.test(t)) return null
+    return parseInt(t, 10)
+}
+
+// A shell start counts as a login only if the compositor came up moments ago.
+// A null age (cannot read it) is treated as a login rather than refusing to
+// restore - mirrors how the compositor-age check degrades in practice.
+export function isFreshLogin(ageSeconds, windowSeconds) {
+    if (ageSeconds === null || ageSeconds === undefined) return true
+    return ageSeconds <= windowSeconds
+}
+
+// The once-per-session stamp. Lives in $XDG_RUNTIME_DIR (tmpfs, wiped at
+// logout), so the next real login starts with a clean slate but a shell
+// restart within the session does not re-fire the login restore.
+export function bootAppliedMarkerPath(runtimeDir) {
+    return runtimeDir.replace(/\/$/, "") + "/session-restore/applied"
+}
+

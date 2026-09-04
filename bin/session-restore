@@ -5,7 +5,7 @@
 // shell around). Pure logic lives in ../restoreLogic.mjs; system calls in
 // ../lib/io.mjs.
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync, rmSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync, rmSync, openSync, closeSync, lstatSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -22,9 +22,14 @@ import {
     buildRestoreScript,
     wrapRestoreRunner,
     bootMarkerPath,
+    isFreshLogin,
+    bootAppliedMarkerPath,
 } from "../restoreLogic.mjs"
 
-import { hyprctlJson, bash, bashExit, notify, hasCommand } from "../lib/io.mjs"
+import { hyprctlJson, bash, bashExit, notify, hasCommand, compositorAgeSeconds } from "../lib/io.mjs"
+
+// How young the compositor must be for a `--boot` run to count as a login.
+const BOOT_WINDOW = Number(process.env.SESSION_RESTORE_BOOT_WINDOW) || 120
 
 const PLUGIN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const CAPTURE_SCRIPT = join(PLUGIN_DIR, "scripts", "capture_tabs.py")
@@ -103,7 +108,54 @@ async function cmdSave(args) {
     process.stdout.write(`saved "${name}" (${snapshot.windows.length} windows)\n`)
 }
 
+// Login guards for `restore --boot`. Returns false (caller should stop) when
+// this shell start is not a fresh login, or this login was already handled.
+// `--dry-run` runs the checks but never consumes the once-per-session stamp.
+async function passesBootGuards(args) {
+    const age = await compositorAgeSeconds()
+    if (!isFreshLogin(age, BOOT_WINDOW)) {
+        process.stdout.write(`hyprland has been up ${age}s - not a login, nothing to do\n`)
+        return false
+    }
+
+    const runtimeDir = process.env.XDG_RUNTIME_DIR
+    if (!runtimeDir) {
+        process.stderr.write("session-restore: no XDG_RUNTIME_DIR - proceeding on the compositor-age check alone\n")
+        return true
+    }
+
+    const marker = bootAppliedMarkerPath(runtimeDir)
+    const markerDir = dirname(marker)
+    try {
+        if (existsSync(markerDir) && lstatSync(markerDir).isSymbolicLink()) {
+            die(`refusing to use ${markerDir}: it is a symlink`)
+        }
+        mkdirSync(markerDir, { recursive: true, mode: 0o700 })
+        const st = lstatSync(markerDir)
+        if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
+            die(`refusing to use ${markerDir}: not owned by this user`)
+        }
+    } catch (e) {
+        die(`cannot prepare ${markerDir}: ${e.message}`)
+    }
+
+    if (args.dryRun) return true
+
+    try {
+        closeSync(openSync(marker, "wx"))
+    } catch (e) {
+        if (e.code === "EEXIST") {
+            process.stdout.write("already restored once this session - nothing to do\n")
+            return false
+        }
+        die(`cannot write ${marker}: ${e.message}`)
+    }
+    return true
+}
+
 async function cmdRestore(args) {
+    if (args.boot && !(await passesBootGuards(args))) return
+
     const name = resolveName(args, { forWrite: false })
     if (args.boot && !name) {
         process.stdout.write("no boot profile set - nothing to restore\n")

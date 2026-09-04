@@ -20,6 +20,16 @@ by Davedes83, renamed to **Session Restore**.
   `tabCaptureInvocations` / `parseTabResults` / `attachTabs`, `bootMarkerPath`.
 - `.boot-profile` marker file (in the profile dir) naming the profile to
   restore on login.
+- **Automatic restore after reboot.** A `service` entry point
+  (`kinds: ["bar-widget", "service"]`, `keepLoaded`) pokes
+  `session-restore restore --boot` a few seconds after each shell start. The
+  CLI owns the guards: it acts only if the compositor came up within
+  `SESSION_RESTORE_BOOT_WINDOW` seconds (default 120) and no once-per-session
+  stamp exists at `$XDG_RUNTIME_DIR/session-restore/applied`, so a mid-session
+  `omarchy restart shell` does not re-fire it. Armed by setting a boot profile
+  (`session-restore boot-profile <name>`); a no-op until then.
+- `session-restore.service` IPC target with `applyLogin()` to test the login
+  path without logging out.
 
 ### Changed
 
@@ -36,13 +46,22 @@ by Davedes83, renamed to **Session Restore**.
   upstream plugin.
 - New runtime requirement: `node` (>= 18) for the restore engine.
 
+### Deferred - blocked on Hyprland core
+
+- **Tiled layout restore** (which window is beside which, and split ratios).
+  Needs Hyprland to expose the dwindle tree + ratios, which it does not
+  ([hyprwm/Hyprland#13035](https://github.com/hyprwm/Hyprland/discussions/13035);
+  the `splitratio` dispatcher was also removed). Not being built as a geometry
+  heuristic - `io.github.imryiuk.workspace-profiles` already covers that. See
+  [docs/tiled-layout-restore.md](docs/tiled-layout-restore.md) for the trigger
+  condition and, when this plugin ships to the marketplace, the note to add on
+  the upstream thread.
+
 ### Planned in this line
 
-- Login trigger: a `service` entry point (`kinds: ["bar-widget", "service"]`,
-  `keepLoaded`) that runs `session-restore restore --boot` once per login
-  (guarded by a runtime-dir stamp so a shell restart does not re-trigger it).
-- Bar-panel controls: pin boot profile, toggle restore-on-login, update boot
-  profile from the current layout.
+- Bar-panel controls: pin boot profile (star toggle on the profile row),
+  toggle restore-on-login, and "update boot profile from the current layout".
+  Until these land, the boot profile is set from the CLI.
 
 ## [1.1.1] - 2026-08-30
 
