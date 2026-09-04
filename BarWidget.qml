@@ -22,6 +22,7 @@ Panel {
     property bool showNameInput: false
     property bool cliMissing: false
     property string armedDelete: ""       // profile name awaiting a 2nd delete click
+    property string hoverHint: ""         // contextual help shown at the panel foot
 
     readonly property bool anyBusy: isSnapshotting || isRestoring || isBusy
 
@@ -82,7 +83,8 @@ Panel {
         id: button
         anchors.fill: parent
         bar: root.bar
-        text: "󰆒"
+        // MDI "backup-restore" — a clock with a restore arrow.
+        text: "󰦖"
         onPressed: function (b) { root.toggle() }
     }
 
@@ -201,12 +203,8 @@ Panel {
                     cursorShape: parent.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     enabled: parent.enabled
                     onClicked: root.beginSave()
-                }
-
-                PanelToolTip {
-                    visible: saveMouse.containsMouse
-                    text: "Snapshot every open window — app, workspace, size, floating state and browser tabs — into a named profile"
-                    fontFamily: Style.font.family
+                    onContainsMouseChanged: root.hoverHint = containsMouse
+                        ? "Save every open window into a new named session" : ""
                 }
             }
 
@@ -299,7 +297,7 @@ Panel {
                 textFormat: Text.PlainText
                 text: root.profiles.length === 0
                     ? "Save the current session above to get started."
-                    : "A session is the apps you have open and where each one sits — workspace, monitor, size, floating state — plus browser tabs."
+                    : "A session is your open apps and where each one sits — workspace, monitor, size — plus browser tabs. Pin one (󰐃) to also reopen it automatically at login."
                 color: Qt.darker(Color.foreground, 1.55)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -352,11 +350,8 @@ Panel {
                                 cursorShape: Qt.PointingHandCursor
                                 enabled: !root.anyBusy
                                 onClicked: root.doRestore(rowSurface.pname)
-                            }
-                            PanelToolTip {
-                                visible: rowMouse.containsMouse
-                                text: "Restore this session now — reopens its apps on their workspaces"
-                                fontFamily: Style.font.family
+                                onContainsMouseChanged: root.hoverHint = containsMouse
+                                    ? ("Click to reopen “" + rowSurface.pname + "” now") : ""
                             }
 
                             RowLayout {
@@ -365,16 +360,18 @@ Panel {
                                 anchors.rightMargin: Style.space(4)
                                 spacing: Style.space(4)
 
-                                // arm / disarm for login
+                                // pin / unpin for login
                                 PanelActionButton {
                                     iconText: "󰐃"
                                     opacity: rowSurface.isBoot ? 1.0 : 0.5
                                     foreground: rowSurface.isBoot ? Color.accent : Qt.darker(Color.foreground, 1.5)
                                     hoverColor: Color.accent
                                     enabled: !root.anyBusy
-                                    tooltipText: rowSurface.isBoot
-                                        ? "Stop restoring this at login"
-                                        : "Restore this session automatically at login"
+                                    onHovered: root.hoverHint = isHovered
+                                        ? (rowSurface.isBoot
+                                            ? ("Unpin — stop reopening “" + rowSurface.pname + "” at login")
+                                            : ("Pin — reopen “" + rowSurface.pname + "” automatically at login"))
+                                        : ""
                                     onClicked: rowSurface.isBoot
                                         ? root.clearBoot()
                                         : root.setBoot(rowSurface.pname)
@@ -405,13 +402,14 @@ Panel {
                                     }
                                 }
 
-                                // overwrite the armed profile from the current layout
+                                // re-save the pinned session from the current layout
                                 PanelActionButton {
                                     visible: rowSurface.isBoot
                                     iconText: "󰚰"
                                     hoverColor: Color.accent
                                     enabled: !root.anyBusy
-                                    tooltipText: "Re-save this profile from the windows open right now"
+                                    onHovered: root.hoverHint = isHovered
+                                        ? "Re-save this session from the windows open right now" : ""
                                     onClicked: root.updateProfile(rowSurface.pname)
                                 }
 
@@ -420,9 +418,8 @@ Panel {
                                     iconText: rowSurface.armed ? "󰄬" : "󰆴"
                                     hoverColor: Color.urgent
                                     enabled: !root.anyBusy
-                                    tooltipText: rowSurface.armed
-                                        ? "Click again to delete this profile"
-                                        : "Delete this profile"
+                                    onHovered: root.hoverHint = isHovered
+                                        ? (rowSurface.armed ? "Click again to delete" : "Delete this session") : ""
                                     onClicked: root.confirmDelete(rowSurface.pname)
                                 }
                             }
@@ -430,38 +427,26 @@ Panel {
                     }
                 }
 
-            // auto-restore toggle ---------------------------------------
-            Toggle {
+            PanelSeparator {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Style.space(58)
-                label: "Auto-restore at login"
-                description: root.bootProfile !== ""
-                    ? ("Reopens “" + root.bootProfile + "” on login")
-                    : "Pin a session above to arm it"
-                checked: root.bootProfile !== ""
-                onClicked: {
-                    if (root.bootProfile !== "") {
-                        root.clearBoot()
-                    } else if (root.profiles.length === 1) {
-                        root.setBoot(root.firstProfileName())
-                    } else if (root.profiles.length === 0) {
-                        root.lastAction = "Save a session first"
-                    } else {
-                        root.lastAction = "Pin which session to restore"
-                    }
-                }
+                visible: root.profiles.length > 0
             }
 
-            // status line ---------------------------------------------------
+            // foot: contextual hover help, else the last action, else a hint ---
             Text {
                 Layout.fillWidth: true
-                visible: root.lastAction !== ""
+                Layout.minimumHeight: Style.space(30)
                 textFormat: Text.PlainText
-                text: root.lastAction
-                color: Qt.darker(Color.foreground, 1.4)
+                text: root.hoverHint !== "" ? root.hoverHint
+                    : (root.lastAction !== "" ? root.lastAction
+                        : (root.profiles.length > 0
+                            ? "Click a session to reopen it · pin one to auto-restore at login"
+                            : ""))
+                color: root.hoverHint !== "" ? Color.accent : Qt.darker(Color.foreground, 1.5)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
+                verticalAlignment: Text.AlignVCenter
             }
             }
         }
