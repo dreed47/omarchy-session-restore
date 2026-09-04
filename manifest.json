@@ -5,7 +5,7 @@
   "version": "2.0.0",
   "author": "David Reed",
   "license": "MIT",
-  "description": "Save every open window - app, workspace, monitor, size, floating/fullscreen state and browser tabs - as a named session, and bring it back on demand or automatically at login. Pin one session and the plugin's service half reopens it a few seconds after each Hyprland start; once per login, not on a mid-session shell restart. Restore relaunches whatever is closed onto the right workspace and repositions what is already open instead of duplicating it. Requires node (>= 18) for the restore engine and python3 for browser-tab capture. It does NOT restore the tiled arrangement within a workspace (which window is beside which, split ratios) - Hyprland does not expose that yet; see the README and docs/tiled-layout-restore.md. Forked from Davedes83's Workspace Restorer (MIT).",
+  "description": "Save every open window — app, workspace, monitor, size, floating/fullscreen state, working directory, and browser tabs — as a named session. Restore it on demand, or pin one to reopen automatically at login (once per login; a mid-session shell restart will not re-fire it). Requires node >= 18, and python3 for browser tabs. Does NOT restore the tiled split arrangement within a workspace — see the README.",
   "kinds": ["bar-widget", "service"],
   "keepLoaded": true,
   "entryPoints": {
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Session Restore",
-    "description": "Save your open apps and window layout as named sessions, then reopen them on demand from the panel or automatically at login by pinning one. Restores workspace, monitor, position/size, floating and fullscreen state, working directory, and browser tabs; relaunches whatever is missing. Does not restore the tiled split arrangement within a workspace.",
+    "description": "Save your open apps and window layout as named sessions; reopen on demand from the panel or automatically at login. Restores workspace, monitor, size, floating state, and browser tabs — not the tiled split arrangement.",
     "category": "System",
     "aliases": [
       "session",
