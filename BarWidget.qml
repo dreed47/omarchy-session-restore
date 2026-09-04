@@ -22,6 +22,7 @@ Panel {
     property bool showNameInput: false
     property bool cliMissing: false
     property string confirmDeleteName: "" // row showing its inline "Delete? / Cancel"
+    property bool browserTabRestore: false
     property string hoverHint: ""         // contextual help shown at the panel foot
 
     readonly property bool anyBusy: isSnapshotting || isRestoring || isBusy
@@ -154,6 +155,20 @@ Panel {
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption
                     wrapMode: Text.WordWrap
+                }
+            }
+
+            // settings: browser tab restore ------------------------------------
+            Toggle {
+                Layout.fillWidth: true
+                label: "Restore browser tabs"
+                description: "Off: browser windows just move/launch like any app"
+                checked: root.browserTabRestore
+                onClicked: root.setBrowserTabRestore(!root.browserTabRestore)
+                onHovered: function (isHovered) {
+                    root.hoverHint = isHovered
+                        ? "Off by default - capturing/replaying tabs can fight Chrome's own tab restore"
+                        : ""
                 }
             }
 
@@ -292,7 +307,9 @@ Panel {
                 textFormat: Text.PlainText
                 text: root.profiles.length === 0
                     ? "Save the current session above to get started."
-                    : "A session is your open apps and where each one sits — workspace, monitor, size — plus browser tabs. Pin one (󰐃) to also reopen it automatically at login."
+                    : (root.browserTabRestore
+                        ? "A session is your open apps and where each one sits — workspace, monitor, size — plus browser tabs. Pin one (󰐃) to also reopen it automatically at login."
+                        : "A session is your open apps and where each one sits — workspace, monitor, size. Pin one (󰐃) to also reopen it automatically at login.")
                 color: Qt.darker(Color.foreground, 1.55)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -547,10 +564,30 @@ Panel {
                 root.profiles = Array.isArray(s.profiles) ? s.profiles : []
                 root.bootProfile = typeof s.boot === "string" ? s.boot : ""
                 root.bootProfileMissing = root.bootProfile !== "" && s.bootExists === false
+                root.browserTabRestore = s.browserTabRestore === true
             } catch (e) {
                 root.profiles = []
                 root.bootProfile = ""
             }
+        }
+    }
+
+    function setBrowserTabRestore(on) {
+        if (root.anyBusy) return
+        root.browserTabRestore = on // optimistic; refreshStatus() confirms
+        tabRestoreProc.command = ["node", root.cliPath, "tab-restore", on ? "on" : "off"]
+        tabRestoreProc.running = true
+    }
+
+    Process {
+        id: tabRestoreProc
+        stderr: StdioCollector { id: tabRestoreErr; waitForEnd: true }
+        onExited: function (code) {
+            if (code !== 0) {
+                root.lastAction = "Could not change tab restore setting"
+                root.notify(root.lastAction, (tabRestoreErr.text || "").trim())
+            }
+            root.refreshStatus()
         }
     }
 

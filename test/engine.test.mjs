@@ -316,6 +316,51 @@ test("buildRestoreScript resets a spawned Chromium window's crash flag before la
     assert.ok(script.indexOf('exit_type = "Normal"') < script.indexOf("SPATH="))
 })
 
+test("buildRestoreScript clears a spawned Chromium window's session snapshot before launch", () => {
+    // Resetting profile.exit_type alone does not stop current Chrome from
+    // restoring its own last session on top of the tabs this plugin passes
+    // explicitly (verified live: reset to "Normal", relaunched, old tabs
+    // still came back). Its Sessions/Session_*+Tabs_* snapshot files are the
+    // actual data source for that restore, so they must be cleared too.
+    const profile = {
+        windows: [{
+            class: "google-chrome", title: "x", workspace: "1", monitor: "DP-1",
+            command: "/opt/google/chrome/chrome", position: [0, 0], size: [1, 1],
+            floating: false, fullscreen: 0,
+            browser: "chromium", browserProfile: "/home/user/.config/google-chrome",
+            tabs: [{ url: "https://example.com/" }],
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.match(script, /Default\/Sessions'\/Session_\* .*Default\/Sessions'\/Tabs_\*/)
+    // must run before the app is launched
+    assert.ok(script.indexOf("Sessions'/Session_*") < script.indexOf("SPATH="))
+})
+
+test("buildRestoreScript leaves a not-running browser's own restore alone when it has no captured tabs", () => {
+    // With browser tab restore off (the `tab-restore` CLI setting, default
+    // off), or simply no tabs having been captured, the CLI zeroes out
+    // profile.windows[].tabs before this ever runs. The launch must then be
+    // a bare `exec browser` with no crash-flag reset and no session-snapshot
+    // clear - both exist only to make an explicit tab list land cleanly, and
+    // with nothing explicit being passed, Chrome should be left completely
+    // free to do its own thing (which correctly restores its last session on
+    // a first window, same as the user launching it themselves).
+    const profile = {
+        windows: [{
+            class: "google-chrome", title: "x", workspace: "1", monitor: "DP-1",
+            command: "/opt/google/chrome/chrome", position: [0, 0], size: [1, 1],
+            floating: false, fullscreen: 0,
+            browser: "chromium", browserProfile: "/home/user/.config/google-chrome",
+            tabs: [],
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.doesNotMatch(script, /exit_type/)
+    assert.doesNotMatch(script, /Sessions/)
+    assert.match(script, /exec .*\/chrome/)
+})
+
 test("buildRestoreScript does not touch Preferences for a non-browser window", () => {
     const profile = {
         windows: [{ class: "code", title: "x", workspace: "1", monitor: "DP-1", command: "code", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0, browser: null, tabs: null }],

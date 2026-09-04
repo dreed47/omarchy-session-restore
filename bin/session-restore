@@ -48,6 +48,28 @@ function ensureProfileDir() {
     mkdirSync(PROFILE_DIR, { recursive: true })
 }
 
+function settingsPath() {
+    return join(PROFILE_DIR, "settings.json")
+}
+
+function readSettings() {
+    try {
+        var s = JSON.parse(readFileSync(settingsPath(), "utf8"))
+        return (s && typeof s === "object") ? s : {}
+    } catch {
+        return {}
+    }
+}
+
+// Off by default: browser tab capture/restore fights Chrome's own session
+// restore in ways that are difficult for a user to reason about (see
+// CHANGELOG 2.1.0). Off, a browser window is treated like any other app -
+// moved into place if running, launched bare if not - and Chrome is left
+// completely alone to do whatever it naturally does.
+function browserTabRestoreEnabled() {
+    return readSettings().browserTabRestore === true
+}
+
 function readBootMarker() {
     const p = bootMarkerPath(PROFILE_DIR)
     return existsSync(p) ? readFileSync(p, "utf8").trim() : ""
@@ -97,7 +119,7 @@ async function cmdSave(args) {
     const monitors = await hyprctlJson("monitors")
 
     const windows = assembleWindows({ clients, monitors, procInfo, home: HOME })
-    const invocations = tabCaptureInvocations(windows, CAPTURE_SCRIPT)
+    const invocations = browserTabRestoreEnabled() ? tabCaptureInvocations(windows, CAPTURE_SCRIPT) : []
     const tabResults = invocations.length > 0
         ? parseTabResults(await bash(invocations.join("; ")))
         : {}
@@ -199,6 +221,13 @@ async function cmdRestore(args) {
         die(`profile is empty: ${name}`)
     }
 
+    // The toggle governs restore too, not just future saves - a profile
+    // saved while tab restore was on (or before this setting existed) should
+    // not surprise an "off" user by replaying old captured tabs.
+    if (!browserTabRestoreEnabled()) {
+        for (const w of profile.windows) w.tabs = []
+    }
+
     let existing = []
     try {
         existing = await hyprctlJson("clients")
@@ -270,6 +299,7 @@ function cmdStatus(args) {
             profiles: names.map(profileMeta),
             boot,
             bootExists,
+            browserTabRestore: browserTabRestoreEnabled(),
         }) + "\n")
         return
     }
@@ -293,6 +323,20 @@ function cmdDelete(args) {
     }
     if (readBootMarker() === name) rmSync(bootMarkerPath(PROFILE_DIR), { force: true })
     process.stdout.write(`deleted "${name}"\n`)
+}
+
+function cmdTabRestore(args) {
+    const value = args.positionals[0]
+    if (!value) {
+        process.stdout.write((browserTabRestoreEnabled() ? "on" : "off") + "\n")
+        return
+    }
+    if (value !== "on" && value !== "off") die(`tab-restore: expected "on" or "off"`)
+    ensureProfileDir()
+    const settings = readSettings()
+    settings.browserTabRestore = (value === "on")
+    writeFileSync(settingsPath(), JSON.stringify(settings, null, 2))
+    process.stdout.write(`browser tab restore: ${value}\n`)
 }
 
 function cmdBootProfile(args) {
@@ -324,6 +368,7 @@ Usage:
   session-restore delete <name>            remove a saved profile
   session-restore boot-profile [name|--clear]
                                            get/set the profile restored on login
+  session-restore tab-restore [on|off]     get/set browser tab capture+restore (default: off)
 
 Profiles live in ${PROFILE_DIR}
 (override with SESSION_RESTORE_DIR).
@@ -347,6 +392,7 @@ async function main() {
         case "status": return cmdStatus(args)
         case "delete": case "rm": return cmdDelete(args)
         case "boot-profile": return cmdBootProfile(args)
+        case "tab-restore": return cmdTabRestore(args)
         default: die(`unknown command: ${sub} (try --help)`)
     }
 }

@@ -1,6 +1,6 @@
 {
   "name": "omarchy-session-restore",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "description": "Save your open apps and window layout, and reopen them automatically after a reboot. Omarchy shell plugin for Hyprland.",
   "type": "module",
   "private": true,

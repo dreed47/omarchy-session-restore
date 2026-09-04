@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.dreed47.session-restore",
   "name": "Session Restore",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "author": "David Reed",
   "license": "MIT",
-  "description": "Save every open window — app, workspace, monitor, size, floating/fullscreen state, working directory, and browser tabs — as a named session. Restore it on demand, or pin one to reopen automatically at login (once per login; a mid-session shell restart will not re-fire it). Requires node >= 18, and python3 for browser tabs. Does NOT restore the tiled split arrangement within a workspace — see the README.",
+  "description": "Save every open window — app, workspace, monitor, size, floating/fullscreen state, and working directory — as a named session. Restore it on demand, or pin one to reopen automatically at login (once per login; a mid-session shell restart will not re-fire it). Optional browser tab capture/restore (off by default) needs python3. Does NOT restore the tiled split arrangement within a workspace — see the README.",
   "kinds": [
     "bar-widget",
     "service"
@@ -17,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Session Restore",
-    "description": "Save your open apps and window layout as named sessions; reopen on demand from the panel or automatically at login. Restores workspace, monitor, size, floating state, and browser tabs — not the tiled split arrangement.",
+    "description": "Save your open apps and window layout as named sessions; reopen on demand from the panel or automatically at login. Restores workspace, monitor, size, floating state, and (optionally) browser tabs — not the tiled split arrangement.",
     "category": "System",
     "aliases": [
       "session",

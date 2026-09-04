@@ -73,6 +73,11 @@ export function browserRelaunchBase(raw, fallbackClass) {
 // went down), which is exactly when this plugin's login restore matters
 // most. Best-effort: a missing/unreadable Preferences file, or `jq` failing,
 // is silently skipped rather than blocking the restore.
+//
+// NOTE: on current Chrome (verified on 152.x) this alone is not sufficient -
+// see clearChromiumSessionSnapshotLines below, which is the fix that
+// actually stops the restore. Kept anyway as cheap defense-in-depth for
+// older/other Chromium builds that do still key off this flag.
 export function resetChromiumCrashFlagLines(browserProfile, cls, logfileVar) {
     if (!browserProfile || browserTypeForClass(cls) !== "chromium") return []
     var base = String(browserProfile).replace(/\/$/, "")
@@ -83,6 +88,29 @@ export function resetChromiumCrashFlagLines(browserProfile, cls, logfileVar) {
         "if [ -f " + prefs + " ]; then",
         "  jq '.profile.exit_type = \"Normal\"' " + prefs + ' > ' + tmp + ' 2>>"' + log + '" && mv ' + tmp + " " + prefs + " || rm -f " + tmp,
         "fi",
+    ]
+}
+
+// The actual fix for Chrome auto-restoring old tabs on top of the ones this
+// plugin explicitly launches: current Chrome (verified on 152.x) restores
+// from its own Sessions/Session_*+Tabs_* snapshot files after an abrupt
+// exit - a reboot where Chrome was killed rather than quit - regardless of
+// `profile.exit_type` (see resetChromiumCrashFlagLines; confirmed live that
+// resetting it to "Normal" did not stop the restore). Since this plugin
+// always passes an explicit, authoritative tab list on relaunch, Chrome's
+// own snapshot is never wanted - deleting it before launch removes the data
+// the restore would otherwise be built from. Verified live: 3 consecutive
+// relaunches with a forced-unclean profile, exactly the captured tab count
+// each time, no extras. Best-effort: a missing Sessions dir is a no-op.
+export function clearChromiumSessionSnapshotLines(browserProfile, cls) {
+    if (!browserProfile || browserTypeForClass(cls) !== "chromium") return []
+    var base = String(browserProfile).replace(/\/$/, "")
+    // Quoted directory + unquoted glob suffix: the shell concatenates them
+    // into one word before pathname expansion, so the glob still expands
+    // (an entirely single-quoted path would not).
+    var sessions = shellArg(base + "/Default/Sessions")
+    return [
+        "rm -f " + sessions + "/Session_* " + sessions + "/Tabs_* 2>/dev/null || true",
     ]
 }
 
@@ -613,9 +641,18 @@ export function buildRestoreScript(profile, existing) {
             if (k < cmds.length - 1) steps.push("sleep 0.4")
         }
         var launchline = steps.length > 0 ? steps.join("\n") : "exit 1"
-        if (w.browser) {
+        // Only touch the browser's own crash/session state when actually
+        // relaunching an explicit tab list on top of it - with no captured
+        // tabs (tab restore off, or none captured), the launch above is a
+        // bare `exec browser`, and Chrome should be left completely alone to
+        // do whatever it naturally does (which, left untouched, correctly
+        // restores its own last session on this first window - it only
+        // needs help here to avoid duplicating on top of an explicit list).
+        if (w.browser && w.tabs && w.tabs.length > 0) {
             var resetLines = resetChromiumCrashFlagLines(w.browserProfile, cls)
             for (var r = 0; r < resetLines.length; r++) lines.push(resetLines[r])
+            var clearLines = clearChromiumSessionSnapshotLines(w.browserProfile, cls)
+            for (var c2 = 0; c2 < clearLines.length; c2++) lines.push(clearLines[c2])
         }
         lines.push('SPATH="$WSROOT/spawn-' + j + '.sh"')
         lines.push("printf '#!/bin/bash\\n%s\\n' " + shellArg(launchline) + ' > "$SPATH" && chmod 700 "$SPATH"')

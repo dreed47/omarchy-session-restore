@@ -281,19 +281,26 @@ def _chromium_pinned_urls(user_data_dir):
 
 
 def capture_chromium(user_data_dir):
-    pinned = _chromium_pinned_urls(user_data_dir)
-
     # Primary: an already-open DevTools debug port (browser launched with
-    # --remote-debugging-port). Only reads; never starts a browser.
+    # --remote-debugging-port). Only reads; never starts a browser. CDP's
+    # tab list carries no pin state, so pinned tabs are excluded using the
+    # profile's `Preferences` pinned_tabs field here - best-effort, and can
+    # occasionally lag a just-changed pin (it's written on its own debounced
+    # schedule), but there is no same-snapshot alternative on this path.
     tabs = _capture_chromium_cdp(user_data_dir)
     if tabs is not None and tabs:
+        pinned = _chromium_pinned_urls(user_data_dir)
         return {"ok": True, "tabs": [t for t in tabs if t.get("url") not in pinned]}
     # Fallback: decode Vivaldi/Chromium "Sessions/Tabs_*" SNSS session files
     # for the current open tabs. Works for normal browser launches that were
-    # not started with a debug port.
+    # not started with a debug port. Pinned tabs are already excluded inside
+    # _capture_vivaldi_snss using the same snapshot's own pin-state records,
+    # which is race-free (unlike Preferences pinned_tabs) - do not re-filter
+    # here with the Preferences-based set, which could wrongly exclude a
+    # regular tab whose URL was pinned in some earlier, stale session.
     tabs = _capture_vivaldi_snss(user_data_dir)
     if tabs is not None and tabs:
-        return {"ok": True, "tabs": [t for t in tabs if t.get("url") not in pinned]}
+        return {"ok": True, "tabs": tabs}
     if tabs is None:
         return {"ok": False, "error": "no DevToolsActivePort (browser not started with --remote-debugging-port)"}
     return {"ok": False, "error": "no current tabs found in sessions files"}
@@ -412,6 +419,7 @@ def _capture_vivaldi_snss(user_data_dir):
     tabidx = {}  # tab_id -> index within window
     selecnav = {}   # tab_id -> selected navigation index
     selidx = {}     # window_id -> selected tab index
+    pinned = {}     # tab_id -> pinned bool (command 12, last write wins)
     try:
         for cid, contents in _iter_snss_records(path):
             if cid == 6 and len(contents) >= 16:
@@ -431,6 +439,17 @@ def _capture_vivaldi_snss(user_data_dir):
             elif cid == 7 and len(contents) >= 8:
                 tid, idx = struct.unpack_from("<ii", contents, 0)
                 selecnav[tid] = idx
+            elif cid == 12 and len(contents) >= 8:
+                # SetPinnedState: {tab_id: int32, pinned: int32(bool)}. Read
+                # from the same snapshot as the tab list itself, unlike the
+                # profile's `Preferences` pinned_tabs field (which is written
+                # on its own debounced schedule and can be stale relative to
+                # a just-changed pin - verified live: pins that were correct
+                # in Preferences seconds later were still missing at the
+                # moment a save actually ran, so tabs meant to be excluded as
+                # pinned were captured as regular tabs instead).
+                tid, p = struct.unpack_from("<ii", contents, 0)
+                pinned[tid] = bool(p)
             elif cid == 8 and len(contents) >= 8:
                 wid, idx = struct.unpack_from("<ii", contents, 0)
                 selidx[wid] = idx
@@ -454,6 +473,8 @@ def _capture_vivaldi_snss(user_data_dir):
     tabs = []
     ordered = sorted(wins[focus_wid], key=lambda t: tabidx.get(t, 0))
     for tid in ordered:
+        if pinned.get(tid):
+            continue
         hist = nav.get(tid, {})
         if not hist:
             continue

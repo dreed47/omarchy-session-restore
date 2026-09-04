@@ -13,7 +13,7 @@ back — on demand, or automatically after a reboot.
 
 - **Save a session** — a named snapshot of every open window: app, workspace,
   monitor, position, size, floating/fullscreen state, working directory, and
-  browser tabs.
+  (optionally, see [Browser tabs](#browser-tabs)) browser tabs.
 - **Restore on demand** — relaunches whatever is closed onto the right
   workspace; repositions windows that are already open instead of duplicating
   them; chases slow apps (Electron) for ~15 s.
@@ -31,7 +31,8 @@ back — on demand, or automatically after a reboot.
 - **Restore app *state*** — it relaunches apps, it does not reopen documents or
   scroll positions (browser tabs are the exception).
 - **Run without `node`** — the restore engine is a Node script. `python3` is
-  also needed for browser-tab capture; everything else works without it.
+  also needed for browser-tab capture, which is off by default; everything
+  else works without it.
 
 ## Install
 
@@ -70,7 +71,7 @@ delete that directory too if you don't want them.
 
 - Omarchy with the Quickshell bar, Hyprland
 - `node` >= 18 — `omarchy pkg add nodejs`
-- `python3` (browser tab capture; the rest works without it)
+- `python3` (browser tab capture, off by default; the rest works without it)
 
 ## Using it
 
@@ -84,8 +85,39 @@ Click the bar icon to open the panel.
 - The pinned row gets an **update** action (↻) that re-saves it from the windows
   open right now.
 - **Delete** is a two-click confirm on the trash icon.
+- **Restore browser tabs** toggle — off by default; see [Browser tabs](#browser-tabs).
 
 Hovering any control shows what it does in the line at the foot of the panel.
+
+## Browser tabs
+
+Off by default. On, saving a session also captures each browser window's open
+tabs, and restore reopens them explicitly — with no duplicates, this is
+handled correctly regardless of whether the browser is already running.
+
+The tradeoff: getting that right requires disarming Chrome's own
+crash/session-restore for the windows this launches (otherwise Chrome's
+restore and this plugin's explicit tab list both try to open the same tabs).
+Pinned tabs are a casualty of that — they don't come back on their own the
+way they do when you launch the browser yourself, since pinned-tab restore
+rides the exact same mechanism. Turning tab restore on trades "your pinned
+tabs return automatically" for "regular tabs are restored exactly, with no
+duplicates."
+
+Off (default), a browser window is treated like any other app: moved onto
+its saved workspace if it's already running, launched bare if not — Chrome
+is left completely alone, so its own restore (including pinned tabs) behaves
+exactly as if you'd launched it yourself.
+
+The setting applies to both save and restore, so switching it off stops a
+previously-saved session's captured tabs from being replayed too — no need
+to re-save.
+
+```bash
+bin/session-restore tab-restore          # print current setting
+bin/session-restore tab-restore on
+bin/session-restore tab-restore off
+```
 
 ## Command line
 
@@ -99,6 +131,7 @@ bin/session-restore status             # + which session is pinned
 bin/session-restore delete <name>
 bin/session-restore boot-profile <name>   # pin for login   (--clear to unpin)
 bin/session-restore restore --boot        # what the login service runs
+bin/session-restore tab-restore [on|off]  # browser tab capture/restore (default: off)
 ```
 
 Profiles are JSON in `~/.config/omarchy/session-restore/` (override with
@@ -117,7 +150,8 @@ SESSION_RESTORE_BOOT_WINDOW=99999 bin/session-restore restore --boot
 
 - Capture: `hyprctl -j clients` + `hyprctl -j monitors`, plus each window's
   command line and working directory from `/proc/<pid>` (keyed by PID so
-  nothing misaligns), plus browser tabs via `scripts/capture_tabs.py`.
+  nothing misaligns), plus browser tabs via `scripts/capture_tabs.py` when
+  the tab-restore setting is on (see [Browser tabs](#browser-tabs)).
 - Restore: reads the profile, matches it against currently-open windows in
   three passes (exact class+title, then class + current workspace, then class
   only), moves the matched ones, and spawns the rest — focusing each target

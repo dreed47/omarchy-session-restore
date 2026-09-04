@@ -1,5 +1,51 @@
 # Changelog
 
+## [2.1.0] - 2026-09-04
+
+Browser tab capture/restore is now **off by default**, behind a new toggle.
+
+2.0.4 fixed regular-tab duplication after reboot by deleting Chrome's own
+`Sessions/Session_*`/`Tabs_*` snapshot before relaunching a captured tab
+list. Live testing surfaced the real cost of that: pinned-tab restore turned
+out to ride the exact same snapshot (confirmed live - a manually-launched
+Chrome window restores pinned tabs on its first window; a restore-launched
+one, with that snapshot cleared, does not). There is no way to get "no
+duplicates" and "pinned tabs return automatically" at the same time, because
+both behaviors are driven by the one mechanism this plugin has to disable
+for the first. That tradeoff, plus the number of Chrome-internals edge
+cases it took to get regular-tab restore merely correct (five, across
+2.0.1-2.0.4), made the feature more confusing than it was worth as a
+default.
+
+### Changed
+
+- **Browser tab capture/restore now defaults to off.** A browser window is
+  treated like any other app: moved onto its saved workspace if already
+  running, launched bare if not - Chrome is left completely alone, so its
+  own restore (pinned tabs included) behaves exactly as if launched by
+  hand.
+- New panel toggle, **Restore browser tabs**, and CLI command
+  `session-restore tab-restore [on|off]`. The setting governs both save
+  (whether tabs are captured at all) and restore (a previously-saved
+  profile's captured tabs are ignored while the setting is off, so turning
+  it off does not require re-saving).
+- On, behavior is unchanged from 2.0.4: tabs restore with no duplicates,
+  regardless of whether the browser is already running; pinned tabs still
+  do not auto-return, for the reason above.
+
+### Fixed
+
+- **Pinned-tab exclusion from capture was racy.** It read the profile's
+  `Preferences` file's `pinned_tabs` list, which Chrome flushes to disk on
+  its own debounced schedule - stale relative to a pin made shortly before
+  a save, which then captured that tab as a regular one instead of
+  excluding it (confirmed live: a session saved this way restored 10
+  pinned tabs as regular, unpinned tabs). Fixed by reading pin state
+  directly out of the same `Sessions/Session_*` SNSS snapshot the tab list
+  itself comes from (`SetPinnedState`, command id 12: `{tab_id, pinned}`,
+  last write wins) - same snapshot, no cross-file staleness possible.
+  Verified live against a 12-tab window (10 pinned): decodes exactly right.
+
 ## [2.0.4] - 2026-09-04
 
 2.0.1-2.0.3 each patched a new cause of the same "browser tab restore
