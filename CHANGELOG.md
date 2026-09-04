@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.0] - unreleased
+## [2.0.0] - 2026-09-03
 
 Forked from [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
 1.1.1 by Davedes83 and renamed to **Session Restore**. The snapshot/restore
