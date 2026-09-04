@@ -86,6 +86,31 @@ export function resetChromiumCrashFlagLines(browserProfile, cls, logfileVar) {
     ]
 }
 
+// Bash lines that poll for a just-closed browser process to actually exit,
+// instead of assuming a fixed sleep was long enough.
+//
+// `hl.dsp.window.close` only sends a close request - it does not wait for the
+// process to exit. Browsers are single-instance: if the old process has not
+// actually quit yet when the next line `exec`s a fresh one with the captured
+// tab URLs, that new invocation does not replace it - it attaches to the
+// still-running instance over IPC and adds the URLs as new tabs onto the
+// window's *existing* ones, doubling every one of them. Polls `kill -0` on
+// the closed window's pid for up to ~15s (150 x 0.1s) and gives up rather
+// than hanging a restore on a browser that will not quit - the close request
+// and the relaunch that follows still happen either way, so a browser that
+// ignores this simply keeps today's tab-merging behaviour instead of failing
+// outright.
+export function waitForPidExitLines(pid, logfileVar) {
+    var n = numOr(pid)
+    if (n <= 0) return []
+    var log = logfileVar || "$LOGFILE"
+    return [
+        "BCWAIT=0",
+        "while kill -0 " + n + ' 2>/dev/null && [ $BCWAIT -lt 150 ]; do sleep 0.1; BCWAIT=$((BCWAIT+1)); done',
+        'echo "[close-browser] pid=' + n + ' gone after ${BCWAIT}x0.1s" >> "' + log + '"',
+    ]
+}
+
 export function safeWorkspace(ws) {
     if (typeof ws !== "string") return null
     if (!/^[_a-z0-9]{1,32}$/i.test(ws)) return null
@@ -326,6 +351,11 @@ export function assembleWindows(opts) {
 
     for (var i = 0; i < clients.length; i++) {
         var c = clients[i]
+        // The Omarchy shell itself (bar, panels, popups) is quickshell-based
+        // infrastructure this plugin runs inside of, always-on and never
+        // something a session should relaunch - restoring it would spawn a
+        // redundant second shell instance. Skip it rather than capture it.
+        if (c.class === "org.quickshell") continue
         var info = procInfo[String(c.pid)]
         var rawCmd = (info && info.cmdline) ? info.cmdline.trim() : null
         var cwd = (info && info.cwd) ? info.cwd.trim() : null
@@ -449,7 +479,7 @@ export function buildRestoreScript(profile, existing) {
     var toMove = []
     var toFloat = []
     var matchedAddrs = []
-    var browserCloseAddrs = []
+    var browserCloseTargets = [] // { addr, pid } - see waitForPidExitLines
 
     // Match running windows to profile windows in three passes, most confident
     // first, so multi-window same-class apps (two browser windows, three
@@ -467,7 +497,7 @@ export function buildRestoreScript(profile, existing) {
         var claim = function (e, pIdx) {
             var target = profile.windows[pIdx]
             if (target.browser && target.tabs && target.tabs.length > 0) {
-                browserCloseAddrs.push(e.address)
+                browserCloseTargets.push({ addr: e.address, pid: e.pid })
                 return
             }
             matched[pIdx] = true
@@ -561,14 +591,18 @@ export function buildRestoreScript(profile, existing) {
         lines.push("hyprctl dispatch \"hl.dsp.window.resize({x=" + fw + ", y=" + fh + ", window='address:" + fl.addr + "'})\" 2>>\"$LOGFILE\" || true")
     }
 
-    // Phase 2c: close existing browser windows whose snapshot carried tabs so
-    // the browser process exits and Phase 3 can relaunch it clean.
-    if (browserCloseAddrs.length > 0) {
-        for (var bc = 0; bc < browserCloseAddrs.length; bc++) {
-            lines.push('echo "[close-browser] addr=' + browserCloseAddrs[bc] + '" >> "$LOGFILE"')
-            lines.push("hyprctl dispatch \"hl.dsp.window.close({window='address:" + browserCloseAddrs[bc] + "'})\" 2>>\"$LOGFILE\" || true")
+    // Phase 2c: close existing browser windows whose snapshot carried tabs,
+    // and wait for each one's process to actually exit, so Phase 3 relaunches
+    // a clean process instead of adding tabs onto one that never closed.
+    if (browserCloseTargets.length > 0) {
+        for (var bc = 0; bc < browserCloseTargets.length; bc++) {
+            var bct = browserCloseTargets[bc]
+            lines.push('echo "[close-browser] addr=' + bct.addr + '" >> "$LOGFILE"')
+            lines.push("hyprctl dispatch \"hl.dsp.window.close({window='address:" + bct.addr + "'})\" 2>>\"$LOGFILE\" || true")
+            var waitLines = waitForPidExitLines(bct.pid)
+            for (var wl = 0; wl < waitLines.length; wl++) lines.push(waitLines[wl])
         }
-        lines.push("sleep 1.5")
+        lines.push("sleep 0.3")
     }
 
     // Phase 3: spawn missing windows onto their target workspace

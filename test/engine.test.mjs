@@ -129,6 +129,16 @@ test("assembleWindows falls back to raw monitor id and null command", () => {
     assert.equal(w[0].command, null)
 })
 
+test("assembleWindows excludes the Omarchy shell's own surfaces", () => {
+    const clients = [
+        { class: "org.quickshell", title: "", pid: 1, address: "0x1", workspace: { name: "1", id: 1 }, monitor: 0, at: [0, 0], size: [1, 1] },
+        { class: "code", title: "Editor", pid: 2, address: "0x2", workspace: { name: "1", id: 1 }, monitor: 0, at: [0, 0], size: [1, 1] },
+    ]
+    const w = assembleWindows({ clients, monitors: MONITORS, procInfo: {}, home: HOME })
+    assert.equal(w.length, 1)
+    assert.equal(w[0].class, "code")
+})
+
 // --- tab capture routing ---
 
 test("tabCaptureInvocations emits one shell-quoted call per unique profile", () => {
@@ -258,6 +268,30 @@ test("buildRestoreScript: exact title match wins over array order", () => {
     assert.match(script, /window\.move\(\{workspace='3', window='address:0xB'/)
     assert.doesNotMatch(script, /workspace='2', window='address:0xB'/)
     assert.match(script, /spawn-0\.sh/) // term-A (ws2) still needs spawning
+})
+
+test("buildRestoreScript waits for the closed browser's pid instead of a fixed sleep", () => {
+    // Regression: a flat `sleep 1.5` after closing a matched browser window
+    // was not always long enough. If the old process had not actually quit by
+    // the time the relaunch ran, the "new" browser attached to the still-open
+    // window over IPC and added tabs onto its existing ones instead of
+    // replacing it - doubling every tab.
+    const profile = {
+        windows: [{
+            class: "google-chrome", title: "Editor", workspace: "1", monitor: "DP-1",
+            command: "chrome", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+            browser: "chromium", browserProfile: "/home/user/.config/google-chrome",
+            tabs: [{ url: "https://example.com/" }],
+        }],
+    }
+    const existing = [
+        { class: "google-chrome", title: "Editor", address: "0xaaaa", pid: 4242, workspace: { name: "1" }, floating: false, fullscreen: 0 },
+    ]
+    const { script } = buildRestoreScript(profile, existing)
+    assert.match(script, /kill -0 4242/)
+    assert.doesNotMatch(script, /^sleep 1\.5$/m)
+    // the wait must run before the relaunch
+    assert.ok(script.indexOf("kill -0 4242") < script.indexOf("SPATH="))
 })
 
 test("buildRestoreScript resets a spawned Chromium window's crash flag before launch", () => {

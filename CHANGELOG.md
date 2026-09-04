@@ -1,11 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.3] - 2026-09-04
+
+Consolidates the 2.0.1-2.0.3 patch releases, all chasing the same user report
+("browser tab restore is duplicating tabs") through five independent causes
+found one after another as each earlier fix exposed the next.
 
 ### Fixed
 
 - **Browser tab restore was opening far more tabs than it should, compounding
-  on every restore.** Two causes, both in browser-tab handling:
+  on every restore.** Five causes, all in browser-tab handling:
   1. Once a browser window was ever restored via `exec browser url1 url2 ...`,
      that argv stayed in the process's `/proc/<pid>/cmdline` for as long as the
      browser kept running - `exec` replaces the process image. The *next*
@@ -42,6 +46,26 @@
      `jq` (best-effort; a missing/unreadable Preferences file is skipped, not
      an error). Verified live: forcing `exit_type` to `"Crashed"` and
      restoring a 3-tab profile came back with exactly 3 tabs, not 6.
+  5. **The real remaining cause, found from a live user report after 2.0.2:
+     closing a matched browser window did not wait for the process to
+     actually exit.** `hl.dsp.window.close` only sends a close request; the
+     code then slept a fixed 1.5s before relaunching. Browsers are
+     single-instance - if the old process had not actually quit in that
+     window, the "relaunch" a moment later did not replace it, it attached to
+     the still-open window over IPC and added the captured tabs as *new*
+     tabs onto the ones already there, doubling every one (pinned tabs,
+     already excluded by fix 2, were correctly unaffected - exactly what was
+     reported: 3 tabs became 6, 9 pinned tabs stayed 9). Fixed: the restore
+     script now polls `kill -0` on the closed window's pid (up to ~15s)
+     before relaunching, instead of a fixed sleep. Verified live: 3
+     consecutive real (non-`--dry-run`) restores in a row, tab count stayed
+     flat.
+
+- Capture no longer records the Omarchy shell's own bar/panel surfaces
+  (window class `org.quickshell`) as if they were a user app. Restoring one
+  used to spawn a redundant second shell instance and made restore report an
+  extra "window" that was never a real app. Existing saved profiles still
+  carry it until re-saved.
 
 ## [2.0.0] - 2026-09-03
 
