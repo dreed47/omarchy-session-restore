@@ -72,11 +72,6 @@ Panel {
         return Math.floor(s / 86400) + "d ago"
     }
 
-    // First name in the (object) profile list, or "".
-    function firstProfileName() {
-        return root.profiles.length > 0 ? root.profiles[0].name : ""
-    }
-
     // --- bar button --------------------------------------------------------
 
     BarIconButton {

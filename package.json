@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node --test",
     "validate": "node scripts/validate-manifest.mjs",
-    "check": "node --check restoreLogic.mjs && node scripts/validate-manifest.mjs && node --test"
+    "check": "node --check restoreLogic.mjs && node --check lib/io.mjs && node --check bin/session-restore && node scripts/validate-manifest.mjs && node --test"
   },
   "repository": {
     "type": "git",

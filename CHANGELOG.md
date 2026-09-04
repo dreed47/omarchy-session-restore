@@ -1,86 +1,64 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
-
 ## [2.0.0] - unreleased
 
-Fork of [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
-by Davedes83, renamed to **Session Restore**.
+Forked from [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
+1.1.1 by Davedes83 and renamed to **Session Restore**. The snapshot/restore
+engine, `scripts/capture_tabs.py`, and the pure helpers in `restoreLogic.mjs`
+originate there (MIT — see [NOTICE](NOTICE)).
 
 ### Added
 
-- Standalone `bin/session-restore` CLI (Node) - the single snapshot/restore
-  engine. Subcommands: `save`, `restore`, `list`, `delete`, `boot-profile`,
-  plus `restore --boot` / `save --boot` for the login path and `--dry-run` to
-  print the restore script without running it. This is what the post-boot
-  hook will call, so login restore does not depend on the shell being up.
-- Pure builders extracted into `restoreLogic.mjs` and unit-tested:
-  `assembleWindows`, `buildSnapshot`, `buildRestoreScript`, `wrapRestoreRunner`,
+- **Standalone `bin/session-restore` CLI (Node)** — the single snapshot/restore
+  engine. Subcommands: `save`, `restore`, `list`, `status`, `delete`,
+  `boot-profile`, plus `restore --boot` for the login path and `--dry-run`.
+  The bar widget and the login service both shell out to it.
+- **Restore at login** via a `service` entry point
+  (`kinds: ["bar-widget", "service"]`, `keepLoaded`). It runs `restore --boot`
+  a few seconds after each shell start; the CLI acts only if the Hyprland
+  instance is younger than `SESSION_RESTORE_BOOT_WINDOW` seconds (default 120)
+  and it has not already run for this Hyprland instance — a stamp in
+  `$XDG_RUNTIME_DIR/session-restore/applied` keyed to
+  `$HYPRLAND_INSTANCE_SIGNATURE`, so a mid-session `omarchy restart shell` and
+  a runtime dir that survived a fast relogin both do the right thing.
+- **Three-pass window matching** on restore (exact class+title, then class +
+  current workspace, then class only) so multi-window same-class apps no longer
+  swap workspaces when their titles have drifted.
+- **Bar panel rebuilt** on the Omarchy `Ui` kit: hero with the pinned-session
+  name, "Save current session", per-row **pin** to arm/disarm login restore,
+  an **update-from-current-layout** action on the pinned row, two-click delete,
+  an explainer, a Node-missing banner, and a foot line that describes whatever
+  control the mouse is over.
+- Pure, unit-tested builders in `restoreLogic.mjs`: `assembleWindows`,
+  `buildSnapshot`, `buildRestoreScript`, `wrapRestoreRunner`,
   `resolveBrowserProfile`, `procInfoScript` / `parseProcInfo`,
-  `tabCaptureInvocations` / `parseTabResults` / `attachTabs`, `bootMarkerPath`.
-- `.boot-profile` marker file (in the profile dir) naming the profile to
-  restore on login.
-- **Automatic restore after reboot.** A `service` entry point
-  (`kinds: ["bar-widget", "service"]`, `keepLoaded`) pokes
-  `session-restore restore --boot` a few seconds after each shell start. The
-  CLI owns the guards: it acts only if the compositor came up within
-  `SESSION_RESTORE_BOOT_WINDOW` seconds (default 120) and no once-per-session
-  stamp exists at `$XDG_RUNTIME_DIR/session-restore/applied`, so a mid-session
-  `omarchy restart shell` does not re-fire it. Armed by setting a boot profile
-  (`session-restore boot-profile <name>`); a no-op until then.
-- `session-restore.service` IPC target with `applyLogin()` to test the login
-  path without logging out.
-- **Bar panel redesign.** Rebuilt on the Omarchy `Ui` kit: a hero showing the
-  armed profile, a labelled "Save current session" button, per-row **pin** to
-  arm/disarm login restore, an **update-from-current-layout** action on the
-  armed profile, two-click delete, an "Auto-restore at login" toggle, an empty
-  state, a Node-missing banner, and a tooltip on every control.
-- `session-restore status [--json]` - profiles plus the armed login profile in
-  one call (what the panel polls).
+  `tabCaptureInvocations` / `parseTabResults` / `attachTabs`,
+  `bootMarkerPath` / `bootMarkerMatches`, `isFreshLogin`.
 
 ### Changed
 
-- `BarWidget.qml` now shells out to `bin/session-restore` for every action
-  (list / save / restore / delete) instead of carrying its own copy of the
-  snapshot and restore logic - one engine, shared with the login path.
-  "Save Session" opens the name prompt first; the snapshot is taken by the
-  CLI when Save is confirmed.
-- Plugin renamed: id `davedes.workspace-restorer` -> `io.github.dreed47.session-restore`,
-  display name "Workspace Restorer" -> "Session Restore".
-- Profile storage moved: `~/.config/omarchy/workspace-restorer/` ->
-  `~/.config/omarchy/session-restore/`. Existing profiles are not migrated
-  automatically; copy the directory across if you are coming from the
-  upstream plugin.
-- New runtime requirement: `node` (>= 18) for the restore engine.
+- Plugin renamed: id `davedes.workspace-restorer` → `io.github.dreed47.session-restore`.
+- Profile storage moved `~/.config/omarchy/workspace-restorer/` →
+  `~/.config/omarchy/session-restore/`. Existing profiles are not migrated —
+  copy the directory across if you used the upstream plugin.
+- New runtime requirement: `node` >= 18.
+- `resolveBrowserProfile` recognises Google Chrome's real `/opt/google/chrome/chrome`
+  command line (was `null`, which disabled tab capture for Chrome).
+- App launches on restore are `setsid`-detached with closed stdio so a
+  relaunched browser can't hold the caller open.
 
-### Deferred - blocked on Hyprland core
+### Deferred — blocked on Hyprland core
 
-- **Tiled layout restore** (which window is beside which, and split ratios).
-  Needs Hyprland to expose the dwindle tree + ratios, which it does not
+- **Tiled layout restore** (window-beside-window, split ratios). Needs Hyprland
+  to expose the dwindle tree + ratios, which it does not
   ([hyprwm/Hyprland#13035](https://github.com/hyprwm/Hyprland/discussions/13035);
   the `splitratio` dispatcher was also removed). Not being built as a geometry
-  heuristic - `io.github.imryiuk.workspace-profiles` already covers that. See
-  [docs/tiled-layout-restore.md](docs/tiled-layout-restore.md) for the trigger
-  condition and, when this plugin ships to the marketplace, the note to add on
-  the upstream thread.
+  heuristic — see [docs/tiled-layout-restore.md](docs/tiled-layout-restore.md),
+  which also carries the note to add on the upstream thread once this plugin is
+  on the marketplace.
 
-## [1.1.1] - 2026-08-30
+---
 
-### Security hardening for browser tab capture
-
-- Bounded all untrusted local browser inputs read during tab capture: the Chromium DevTools debug port is now constrained to a bare 1-5 digit number (so a crafted `DevToolsActivePort` can no longer redirect a snapshot request to an arbitrary host) and the CDP response is capped in size.
-- Bounded Firefox session-store decoding: the compressed file is stat-limited before any read and its declared uncompressed size is validated against a ceiling before decompression, so a crafted `recovery.jsonlz4` cannot force an unbounded memory allocation. The fallback decoder's output is length-checked as well.
-
-## [1.1.0] - 2026-08-30
-
-### Browser tabs now restore correctly
-
-- Fixed browser tab restore when browsers are already running: no more split-screen windows (Firefox), extra session-restore tabs (Vivaldi), or windows landing on the wrong workspace.
-- Changed browser windows with captured tabs are now closed and relaunched fresh at restore time, so each opened window shows exactly the tabs from your snapshot — one window, no duplicates, on the correct workspace.
-- Fixed a launch-script stall that could stop a restore partway through.
-
-> **Note:** restoring a snapshot with browser tabs will close and reopen the matching browser window. Capture snapshots without browser tabs if you prefer not to have browsers relaunched.
-
-## [1.0.0] - 2026-08-27
-
-Initial release.
+Pre-fork history (Workspace Restorer 1.0.0 – 1.1.1, 2026-08): initial release,
+browser-tab restore fixes, and security hardening of the tab-capture inputs.
+See the [upstream changelog](https://github.com/Davedes83/workspace-restorer/blob/master/CHANGELOG.md).

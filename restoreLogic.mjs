@@ -297,7 +297,6 @@ export function assembleWindows(opts) {
             "cwd": cwd,
             "position": [c.at ? c.at[0] : 0, c.at ? c.at[1] : 0],
             "size": [c.size ? c.size[0] : 0, c.size ? c.size[1] : 0],
-            "splitRatio": c.splitratio,
             "floating": c.floating,
             "fullscreen": c.fullscreen,
             "browser": btype,
@@ -419,7 +418,7 @@ export function buildRestoreScript(profile, existing) {
             var eWs = e.workspace ? String(e.workspace.name) : ""
             var tws = safeWorkspace(target.workspace)
             if (tws !== null && eWs !== String(target.workspace)) {
-                toMove.push({ addr: e.address, ws: tws, cls: e.class, splitRatio: target.splitRatio, fullscreen: target.fullscreen, e_floating: e.floating, e_fullscreen: e.fullscreen })
+                toMove.push({ addr: e.address, ws: tws, cls: e.class, fullscreen: target.fullscreen, e_floating: e.floating, e_fullscreen: e.fullscreen })
             }
             if (target.floating) {
                 toFloat.push({ addr: e.address, pos: target.position, size: target.size, e_floating: e.floating, e_fullscreen: e.fullscreen })
@@ -562,7 +561,7 @@ export function buildRestoreScript(profile, existing) {
 
         spawnTargets.push({
             cls: cls, ws: ws, floating: w.floating, fullscreen: w.fullscreen,
-            splitRatio: w.splitRatio, pos: w.position, size: w.size
+            pos: w.position, size: w.size
         })
         spawnCount++
     }

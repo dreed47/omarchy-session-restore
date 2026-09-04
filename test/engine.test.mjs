@@ -86,12 +86,12 @@ const CLIENTS = [
     {
         class: "code", title: "Editor", pid: 100, address: "0xaa",
         workspace: { name: "2", id: 2 }, monitor: 0,
-        at: [10, 20], size: [800, 600], splitratio: 1, floating: false, fullscreen: 0,
+        at: [10, 20], size: [800, 600], floating: false, fullscreen: 0,
     },
     {
         class: "firefox", title: "Web", pid: 200, address: "0xbb",
         workspace: { name: "1", id: 1 }, monitor: 1,
-        at: [0, 0], size: [1920, 1080], splitratio: 1, floating: true, fullscreen: 0,
+        at: [0, 0], size: [1920, 1080], floating: true, fullscreen: 0,
     },
 ]
 const MONITORS = [{ id: 0, name: "DP-1" }, { id: 1, name: "HDMI-A-1" }]

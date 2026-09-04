@@ -1,147 +1,137 @@
 # Session Restore
 
-An [Omarchy](https://omarchy.org/) shell plugin (Quickshell) for Hyprland that
-saves your open apps and window layout as named profiles and brings them
-back — on demand, or **automatically after a reboot**.
+An [Omarchy](https://omarchy.org/) shell plugin (Quickshell / Hyprland) that
+saves your open apps and window layout as named **sessions** and brings them
+back — on demand, or automatically after a reboot.
 
-> This is a fork of [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
-> by Davedes83 (MIT). See [NOTICE](NOTICE) for what changed. The 2.x line adds
-> automatic restore on login; see [CHANGELOG.md](CHANGELOG.md).
+![The panel](preview.png)
 
-## Features
+> Forked from [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
+> by Davedes83 (MIT). What changed: see [NOTICE](NOTICE) and [CHANGELOG.md](CHANGELOG.md).
 
-- **Save a session** — Capture every open window: app, workspace, screen
-  position, size, floating/fullscreen state, working directory, and browser tabs
-- **Restore on demand** — Re-launch missing apps directly onto the workspace
-  they were on; move already-running windows back into place
-- **Restore after reboot** — Name one profile as the *boot profile* and it
-  reopens automatically a few seconds after you log in (once per login, not on
-  a mid-session shell restart)
-- **Conflict detection** — Avoids duplicate spawns; repositions existing windows
-  instead of relaunching them
-- **Desktop notifications** — Feedback on save / restore / delete
+## What it does
 
-## Installation
+- **Save a session** — every open window's app, workspace, monitor, position,
+  size, floating/fullscreen state, working directory, and browser tabs.
+- **Restore on demand** — relaunches whatever is closed onto the right
+  workspace; moves already-open windows back into place instead of duplicating.
+- **Restore at login** — pin one session and it reopens a few seconds after you
+  log in. Once per login only — a mid-session `omarchy restart shell` won't
+  re-trigger it.
+
+**Not restored:** the tiled arrangement *within* a workspace (which window is
+beside which, split ratios). See [Limitations](#limitations).
+
+## Install
 
 ```bash
 omarchy plugin add https://github.com/dreed47/omarchy-session-restore
 ```
 
-Or clone manually into the plugin directory:
+Or clone into the plugin directory and enable it:
 
 ```bash
 git clone https://github.com/dreed47/omarchy-session-restore \
   ~/.config/omarchy/plugins/io.github.dreed47.session-restore
 ```
 
-Then add it to your `~/.config/omarchy/shell.json`:
-
 ```json
-{
-  "bar": {
-    "layout": {
-      "right": [
-        { "id": "io.github.dreed47.session-restore" }
-      ]
-    }
-  }
-}
+// ~/.config/omarchy/shell.json
+{ "bar": { "layout": { "right": [ { "id": "io.github.dreed47.session-restore" } ] } } }
 ```
-
-Restart the shell:
 
 ```bash
 omarchy restart shell
 ```
 
-## Usage
+## Requirements
 
-1. Click the bar widget to open the panel
-2. **Save current session** → name it (e.g. `coding`, `media`)
-3. Click a session row to restore that layout now
-4. **Pin** a row to have it restore automatically at login
-5. Delete is a two-click confirm on the trash action
+- Omarchy with the Quickshell bar, Hyprland
+- `node` >= 18 — `omarchy pkg add nodejs`
+- `python3` (browser tab capture; the rest works without it)
 
-### Restore after reboot
+## Using it
 
-Open the panel and click the **pin** on a saved session to arm it — that profile
-now restores automatically a few seconds after each login. The pinned row is
-tinted, and the header shows which profile is armed. Click the pin again (or the
-**Auto-restore at login** toggle) to turn it off.
+Click the bar icon to open the panel.
 
-The pinned row also gets an **update** action that overwrites the profile with
-your current window layout, so you can keep the login session current without
-re-pinning.
+- **Save current session** → name it.
+- **Click a session** to reopen it now.
+- **Pin** (the pushpin on the left of a row) marks the session that reopens at
+  login. The pinned row is tinted and the header shows its name; click the pin
+  again to turn it off. One pinned at a time.
+- The pinned row gets an **update** action (↻) that re-saves it from the windows
+  open right now.
+- **Delete** is a two-click confirm on the trash icon.
 
-From the CLI it's `bin/session-restore boot-profile <name>` /
-`bin/session-restore boot-profile --clear`.
+Hovering any control shows what it does in the line at the foot of the panel.
 
-Login restore fires **once per login**. It does not re-run when the shell is
-merely restarted mid-session: it checks the compositor came up moments ago and
-writes a per-session stamp (keyed to the Hyprland instance) in
-`$XDG_RUNTIME_DIR`.
+## Command line
+
+The engine is a standalone CLI (this is also what the login service runs):
+
+```bash
+bin/session-restore save <name>        # capture the current layout
+bin/session-restore restore <name>     # reopen it
+bin/session-restore list               # saved sessions (* = pinned for login)
+bin/session-restore status             # + which session is pinned
+bin/session-restore delete <name>
+bin/session-restore boot-profile <name>   # pin for login   (--clear to unpin)
+bin/session-restore restore --boot        # what the login service runs
+```
+
+Profiles are JSON in `~/.config/omarchy/session-restore/` (override with
+`SESSION_RESTORE_DIR`).
 
 To test the login path without logging out:
 
 ```bash
 rm -f "$XDG_RUNTIME_DIR/session-restore/applied"
-omarchy-shell session-restore.service applyLogin      # or: SESSION_RESTORE_BOOT_WINDOW=99999 bin/session-restore restore --boot
+omarchy-shell session-restore.service applyLogin
+# or, bypassing the compositor-age guard:
+SESSION_RESTORE_BOOT_WINDOW=99999 bin/session-restore restore --boot
 ```
 
 ## How it works
 
-- Profiles are saved as JSON in `~/.config/omarchy/session-restore/`
-- State is captured via `hyprctl -j clients` and `hyprctl -j monitors`
-- Command line and working directory are read per-process from `/proc/<pid>`
-  (keyed by PID, so window data never misaligns)
-- Restore uses the Omarchy Lua bridge (`hl.dsp.*` dispatchers) via
-  `hyprctl dispatch` to move windows and workspaces
-- Missing windows are launched by focusing their target workspace first, then
-  starting the app — so each opens directly where it belongs
-- A detached safety pass re-checks spawned windows and corrects any that ignore
-  the focused workspace, without delaying the restore notification
+- Capture: `hyprctl -j clients` + `hyprctl -j monitors`, plus each window's
+  command line and working directory from `/proc/<pid>` (keyed by PID so
+  nothing misaligns), plus browser tabs via `scripts/capture_tabs.py`.
+- Restore: reads the profile, matches it against currently-open windows in
+  three passes (exact class+title, then class + current workspace, then class
+  only), moves the matched ones, and spawns the rest — focusing each target
+  workspace first so windows open where they belong. A detached pass re-checks
+  slow apps (Electron) for ~15s.
+- All of that lives in `bin/session-restore`; the bar widget and the login
+  `service` entry point both shell out to it, so there is one code path.
+- Login trigger: the `service` half runs `restore --boot` a few seconds after
+  each shell start. The CLI acts only if the Hyprland instance came up within
+  `SESSION_RESTORE_BOOT_WINDOW` seconds (default 120) and it hasn't already run
+  for this Hyprland instance (a stamp in `$XDG_RUNTIME_DIR`, keyed to
+  `$HYPRLAND_INSTANCE_SIGNATURE`).
 
 ## Limitations
 
-The **tiled arrangement inside a workspace is not restored** - which window sits
-left/right/top/bottom of which, and the split ratios between them. Tiled windows
-are launched back onto their workspace and land wherever dwindle puts them.
+The **tiled arrangement inside a workspace is not restored**. Tiled windows
+come back onto their workspace and land wherever dwindle puts them.
 
-This is deferred, not merely unbuilt: doing it properly needs Hyprland to expose
-the dwindle split tree + ratios, which it does not yet
-([hyprwm/Hyprland#13035](https://github.com/hyprwm/Hyprland/discussions/13035)).
-See [docs/tiled-layout-restore.md](docs/tiled-layout-restore.md) for the full
-rationale and the trigger condition for building it.
-
-Restored today: workspace, monitor, floating position/size, fullscreen, browser
-tabs, and relaunching whatever is missing.
-
-## Requirements
-
-- [Omarchy](https://omarchy.org/) Linux
-- Hyprland compositor
-- Quickshell (the Omarchy shell framework)
-- `node` >= 18 (the restore engine) - `omarchy pkg add nodejs`
-- `python3` (browser tab capture)
-
-### Command-line use
-
-The engine is also a standalone CLI, handy for scripts and the login hook:
-
-```bash
-bin/session-restore save coding        # capture the current layout
-bin/session-restore restore coding     # reopen it
-bin/session-restore list               # * marks the boot profile
-bin/session-restore boot-profile coding
-bin/session-restore restore --boot     # what the post-boot hook runs
-```
+This is deferred, not merely unbuilt: it needs Hyprland to expose the dwindle
+split tree and ratios, which it does not yet
+([hyprwm/Hyprland#13035](https://github.com/hyprwm/Hyprland/discussions/13035);
+the `splitratio` dispatcher was also removed). Building it as a geometry
+heuristic is `io.github.imryiuk.workspace-profiles`' territory, not this
+plugin's. Full rationale and the trigger condition:
+[docs/tiled-layout-restore.md](docs/tiled-layout-restore.md).
 
 ## Development
 
 ```bash
-npm install --ignore-scripts
-npm test
+npm test              # unit tests for the pure engine logic
+npm run validate      # check manifest.json against the plugin schema
 ```
+
+The bar widget has no automated check — after editing `BarWidget.qml`,
+`rm -rf ~/.cache/quickshell && omarchy restart shell` (a plain
+`rescanPlugins` does not reload QML).
 
 ## License
 
