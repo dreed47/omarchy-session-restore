@@ -55,6 +55,17 @@ git clone https://github.com/dreed47/omarchy-session-restore \
 omarchy restart shell
 ```
 
+## Remove
+
+```bash
+omarchy plugin remove io.github.dreed47.session-restore
+omarchy restart shell
+```
+
+Removing the plugin takes the bar widget and the login service with it. Your
+saved sessions in `~/.config/omarchy/session-restore/` are left in place —
+delete that directory too if you don't want them.
+
 ## Requirements
 
 - Omarchy with the Quickshell bar, Hyprland
