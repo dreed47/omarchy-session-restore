@@ -6,6 +6,7 @@ import {
     shellArg,
     sanitizeLaunchCommand,
     browserRelaunchBase,
+    resetChromiumCrashFlagLines,
     safeWorkspace,
     safeClass,
     numOr,
@@ -150,6 +151,22 @@ test("browserRelaunchBase falls back to the class name when raw is empty", () =>
 
 test("browserRelaunchBase rejects an unsafe executable token", () => {
     assert.equal(browserRelaunchBase("$(evil) https://x.example/", "firefox"), "")
+})
+
+// --- resetChromiumCrashFlagLines ---
+
+test("resetChromiumCrashFlagLines patches exit_type for a chromium profile", () => {
+    const lines = resetChromiumCrashFlagLines("/home/user/.config/google-chrome", "google-chrome")
+    const script = lines.join("\n")
+    assert.match(script, /'\/home\/user\/\.config\/google-chrome\/Default\/Preferences'/)
+    assert.match(script, /profile\.exit_type = "Normal"/)
+    assert.match(script, /^if \[ -f /)
+})
+
+test("resetChromiumCrashFlagLines is a no-op for firefox and missing profiles", () => {
+    assert.deepEqual(resetChromiumCrashFlagLines("/home/user/.mozilla/firefox/x", "firefox"), [])
+    assert.deepEqual(resetChromiumCrashFlagLines(null, "google-chrome"), [])
+    assert.deepEqual(resetChromiumCrashFlagLines("", "google-chrome"), [])
 })
 
 // --- safeWorkspace ---

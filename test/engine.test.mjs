@@ -260,6 +260,31 @@ test("buildRestoreScript: exact title match wins over array order", () => {
     assert.match(script, /spawn-0\.sh/) // term-A (ws2) still needs spawning
 })
 
+test("buildRestoreScript resets a spawned Chromium window's crash flag before launch", () => {
+    const profile = {
+        windows: [{
+            class: "google-chrome", title: "x", workspace: "1", monitor: "DP-1",
+            command: "/opt/google/chrome/chrome", position: [0, 0], size: [1, 1],
+            floating: false, fullscreen: 0,
+            browser: "chromium", browserProfile: "/home/user/.config/google-chrome",
+            tabs: [{ url: "https://example.com/" }],
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.match(script, /Default\/Preferences/)
+    assert.match(script, /profile\.exit_type = "Normal"/)
+    // the patch must run before the app is launched
+    assert.ok(script.indexOf('exit_type = "Normal"') < script.indexOf("SPATH="))
+})
+
+test("buildRestoreScript does not touch Preferences for a non-browser window", () => {
+    const profile = {
+        windows: [{ class: "code", title: "x", workspace: "1", monitor: "DP-1", command: "code", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0, browser: null, tabs: null }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.doesNotMatch(script, /Preferences/)
+})
+
 test("buildRestoreScript never replays a browser's polluted historical cmdline as tabs", () => {
     // Once this tool restores a browser via `exec chrome url1 url2`, that argv
     // is baked into /proc/<pid>/cmdline for as long as the process lives, so a

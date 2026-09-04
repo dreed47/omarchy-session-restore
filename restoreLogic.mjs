@@ -60,6 +60,32 @@ export function browserRelaunchBase(raw, fallbackClass) {
     return out.join(" ")
 }
 
+// Bash lines that mark a Chromium-family profile's last exit as clean, right
+// before it gets relaunched.
+//
+// Chrome/Chromium auto-restore the previous session on launch whenever
+// `profile.exit_type` in Preferences is not "Normal" - regardless of the
+// restore_on_startup setting or the URLs passed on the command line - and
+// merge that restored session in with whatever tabs we explicitly asked for,
+// duplicating every one of them. The profile ends up in that state after any
+// exit that was not Chrome's own clean quit: most commonly an unclean
+// shutdown (a reboot where Chrome did not get to exit before the machine
+// went down), which is exactly when this plugin's login restore matters
+// most. Best-effort: a missing/unreadable Preferences file, or `jq` failing,
+// is silently skipped rather than blocking the restore.
+export function resetChromiumCrashFlagLines(browserProfile, cls, logfileVar) {
+    if (!browserProfile || browserTypeForClass(cls) !== "chromium") return []
+    var base = String(browserProfile).replace(/\/$/, "")
+    var prefs = shellArg(base + "/Default/Preferences")
+    var tmp = shellArg(base + "/Default/Preferences.sr-tmp")
+    var log = logfileVar || "$LOGFILE"
+    return [
+        "if [ -f " + prefs + " ]; then",
+        "  jq '.profile.exit_type = \"Normal\"' " + prefs + ' > ' + tmp + ' 2>>"' + log + '" && mv ' + tmp + " " + prefs + " || rm -f " + tmp,
+        "fi",
+    ]
+}
+
 export function safeWorkspace(ws) {
     if (typeof ws !== "string") return null
     if (!/^[_a-z0-9]{1,32}$/i.test(ws)) return null
@@ -585,6 +611,10 @@ export function buildRestoreScript(profile, existing) {
             if (k < cmds.length - 1) steps.push("sleep 0.4")
         }
         var launchline = steps.length > 0 ? steps.join("\n") : "exit 1"
+        if (w.browser) {
+            var resetLines = resetChromiumCrashFlagLines(w.browserProfile, cls)
+            for (var r = 0; r < resetLines.length; r++) lines.push(resetLines[r])
+        }
         lines.push('SPATH="$WSROOT/spawn-' + j + '.sh"')
         lines.push("printf '#!/bin/bash\\n%s\\n' " + shellArg(launchline) + ' > "$SPATH" && chmod 700 "$SPATH"')
         lines.push("hyprctl dispatch \"hl.dsp.focus({workspace='" + ws + "'})\" 2>>\"$LOGFILE\" || true")

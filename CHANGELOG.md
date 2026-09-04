@@ -29,6 +29,19 @@
      fix still have pinned URLs baked into their `tabs` array until re-saved.
   3. `buildTabUrls` now also collapses exact-duplicate URLs within one
      snapshot, so a tab is never listed twice regardless of cause.
+  4. **The actual remaining cause after 1-3: Chrome/Chromium's own
+     crash-restore.** Chrome auto-restores its previous session on launch
+     whenever its profile's `Preferences` has `profile.exit_type` other than
+     `"Normal"` - regardless of the URLs passed on the command line - and
+     merges that restored session in with the tabs we explicitly asked for.
+     A profile ends up in that state after any exit that was not Chrome's own
+     clean quit, which an unclean shutdown (a reboot where Chrome did not get
+     to exit first) reliably produces - exactly the login-restore case this
+     plugin exists for. Fixed: before relaunching a Chromium-family browser,
+     the restore script now resets `profile.exit_type` to `"Normal"` via
+     `jq` (best-effort; a missing/unreadable Preferences file is skipped, not
+     an error). Verified live: forcing `exit_type` to `"Crashed"` and
+     restoring a 3-tab profile came back with exactly 3 tabs, not 6.
 
 ## [2.0.0] - 2026-09-03
 
