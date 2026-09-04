@@ -83,8 +83,8 @@ Panel {
         id: button
         anchors.fill: parent
         bar: root.bar
-        // MDI "backup-restore" — a clock with a restore arrow.
-        text: "󰦖"
+        // FA "clone" (\uf24d): two overlapping rounded squares.
+        text: "\uf24d"
         onPressed: function (b) { root.toggle() }
     }
 
