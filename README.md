@@ -11,16 +11,27 @@ back — on demand, or automatically after a reboot.
 
 ## What it does
 
-- **Save a session** — every open window's app, workspace, monitor, position,
-  size, floating/fullscreen state, working directory, and browser tabs.
+- **Save a session** — a named snapshot of every open window: app, workspace,
+  monitor, position, size, floating/fullscreen state, working directory, and
+  browser tabs.
 - **Restore on demand** — relaunches whatever is closed onto the right
-  workspace; moves already-open windows back into place instead of duplicating.
+  workspace; repositions windows that are already open instead of duplicating
+  them; chases slow apps (Electron) for ~15 s.
 - **Restore at login** — pin one session and it reopens a few seconds after you
-  log in. Once per login only — a mid-session `omarchy restart shell` won't
-  re-trigger it.
+  log in. Once per login only — a mid-session `omarchy restart shell` will not
+  re-trigger it, and neither will an already-armed session that was pinned
+  earlier in the same session.
 
-**Not restored:** the tiled arrangement *within* a workspace (which window is
-beside which, split ratios). See [Limitations](#limitations).
+## What it does **not** do
+
+- **Tiled layout within a workspace** — which window sits left/right/top/bottom
+  of which, and the split ratios. Tiled windows come back onto their workspace
+  and land wherever dwindle puts them. This is blocked on Hyprland, not just
+  unbuilt — see [Limitations](#limitations).
+- **Restore app *state*** — it relaunches apps, it does not reopen documents or
+  scroll positions (browser tabs are the exception).
+- **Run without `node`** — the restore engine is a Node script. `python3` is
+  also needed for browser-tab capture; everything else works without it.
 
 ## Install
 
