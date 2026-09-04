@@ -21,7 +21,7 @@ Panel {
     property string lastAction: ""
     property bool showNameInput: false
     property bool cliMissing: false
-    property string armedDelete: ""       // profile name awaiting a 2nd delete click
+    property string confirmDeleteName: "" // row showing its inline "Delete? / Cancel"
     property string hoverHint: ""         // contextual help shown at the panel foot
 
     readonly property bool anyBusy: isSnapshotting || isRestoring || isBusy
@@ -83,11 +83,11 @@ Panel {
         onPressed: function (b) { root.toggle() }
     }
 
-    // Clears a half-committed delete after a couple of seconds.
+    // Auto-dismiss an unanswered delete confirmation.
     Timer {
-        id: delArmTimer
-        interval: 2500
-        onTriggered: root.armedDelete = ""
+        id: confirmTimer
+        interval: 6000
+        onTriggered: root.confirmDeleteName = ""
     }
 
     // --- popup -----------------------------------------------------------
@@ -316,7 +316,7 @@ Panel {
                             required property int index
                             readonly property string pname: modelData.name
                             readonly property bool isBoot: pname === root.bootProfile
-                            readonly property bool armed: pname === root.armedDelete
+                            readonly property bool confirming: pname === root.confirmDeleteName
                             readonly property string subtitle: {
                                 var w = modelData.windows || 0
                                 var t = root.relTime(modelData.savedAt)
@@ -343,7 +343,7 @@ Panel {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                enabled: !root.anyBusy
+                                enabled: !root.anyBusy && !rowSurface.confirming
                                 onClicked: root.doRestore(rowSurface.pname)
                                 onContainsMouseChanged: root.hoverHint = containsMouse
                                     ? ("Click to reopen “" + rowSurface.pname + "” now") : ""
@@ -354,6 +354,7 @@ Panel {
                                 anchors.leftMargin: Style.space(6)
                                 anchors.rightMargin: Style.space(4)
                                 spacing: Style.space(4)
+                                visible: !rowSurface.confirming
 
                                 // pin / unpin for login
                                 PanelActionButton {
@@ -408,14 +409,86 @@ Panel {
                                     onClicked: root.updateProfile(rowSurface.pname)
                                 }
 
-                                // delete (two-click)
+                                // delete — opens the inline confirm below
                                 PanelActionButton {
-                                    iconText: rowSurface.armed ? "󰄬" : "󰆴"
+                                    iconText: "󰆴"
                                     hoverColor: Color.urgent
                                     enabled: !root.anyBusy
-                                    onHovered: root.hoverHint = isHovered
-                                        ? (rowSurface.armed ? "Click again to delete" : "Delete this session") : ""
-                                    onClicked: root.confirmDelete(rowSurface.pname)
+                                    onHovered: root.hoverHint = isHovered ? "Delete this session" : ""
+                                    onClicked: root.askDelete(rowSurface.pname)
+                                }
+                            }
+
+                            // inline delete confirmation ---------------------
+                            Rectangle {
+                                anchors.fill: parent
+                                visible: rowSurface.confirming
+                                radius: Style.cornerRadius
+                                color: Util.alpha(Color.urgent, 0.16)
+
+                                MouseArea { anchors.fill: parent }   // eat row clicks
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: Style.space(10)
+                                    anchors.rightMargin: Style.space(6)
+                                    spacing: Style.space(6)
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        textFormat: Text.PlainText
+                                        text: "Delete “" + rowSurface.pname + "”?"
+                                        color: Color.foreground
+                                        font.family: Style.font.family
+                                        font.pixelSize: Style.font.body
+                                        elide: Text.ElideRight
+                                    }
+
+                                    BorderSurface {
+                                        Layout.preferredWidth: Style.space(66)
+                                        Layout.preferredHeight: Style.space(28)
+                                        radius: Style.cornerRadius
+                                        readonly property bool hot: delYes.containsMouse
+                                        color: hot ? Util.alpha(Color.urgent, 0.35) : Util.alpha(Color.urgent, 0.2)
+                                        borderSpec: Border.controlSpec("normal", Color.urgent, Color.urgent)
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "Delete"
+                                            color: Color.foreground
+                                            font.family: Style.font.family
+                                            font.pixelSize: Style.font.caption
+                                        }
+                                        MouseArea {
+                                            id: delYes
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.doDelete(rowSurface.pname)
+                                        }
+                                    }
+
+                                    BorderSurface {
+                                        Layout.preferredWidth: Style.space(66)
+                                        Layout.preferredHeight: Style.space(28)
+                                        radius: Style.cornerRadius
+                                        readonly property bool hot: delNo.containsMouse
+                                        color: hot ? Style.hoverFillFor(Color.foreground, Color.accent) : "transparent"
+                                        borderSpec: Border.controlSpec(hot ? "hover-cursor" : "normal", Color.foreground, Color.accent)
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "Cancel"
+                                            color: Qt.darker(Color.foreground, 1.3)
+                                            font.family: Style.font.family
+                                            font.pixelSize: Style.font.caption
+                                        }
+                                        MouseArea {
+                                            id: delNo
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.confirmDeleteName = ""
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -593,16 +666,18 @@ Panel {
         }
     }
 
-    function confirmDelete(name) {
+    function askDelete(name) {
         if (root.anyBusy) return
-        if (root.armedDelete !== name) {
-            root.armedDelete = name
-            delArmTimer.restart()
-            return
-        }
-        delArmTimer.stop()
-        root.armedDelete = ""
+        root.confirmDeleteName = name
+        confirmTimer.restart()
+    }
+
+    function doDelete(name) {
+        confirmTimer.stop()
+        root.confirmDeleteName = ""
+        if (root.anyBusy) return
         root.isBusy = true
+        root.lastAction = "Deleting “" + name + "”…"
         deleteProc._name = name
         deleteProc.command = ["node", root.cliPath, "delete", name]
         deleteProc.running = true

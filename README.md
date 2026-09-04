@@ -1,10 +1,10 @@
 # Session Restore
 
+<p align="center"><img src="preview.png" alt="The Session Restore panel" width="360"></p>
+
 An [Omarchy](https://omarchy.org/) shell plugin (Quickshell / Hyprland) that
 saves your open apps and window layout as named **sessions** and brings them
 back — on demand, or automatically after a reboot.
-
-![The panel](preview.png)
 
 > Forked from [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)
 > by Davedes83 (MIT). What changed: see [NOTICE](NOTICE) and [CHANGELOG.md](CHANGELOG.md).
