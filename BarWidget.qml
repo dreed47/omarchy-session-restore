@@ -219,7 +219,7 @@ Panel {
                                     cursorShape: Qt.PointingHandCursor
                                     hoverEnabled: true
                                     enabled: !root.isRestoring && !root.isSnapshotting
-                                    onContainsMouseChanged: parent.parent.color = containsMouse ? "#663333" : "transparent"
+                                    onContainsMouseChanged: parent.parent.parent.color = containsMouse ? "#663333" : "transparent"
                                     onClicked: root.doDelete(modelData)
                                 }
                             }
@@ -297,7 +297,7 @@ Panel {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     hoverEnabled: true
-                    onContainsMouseChanged: parent.parent.color = containsMouse ? root.selectedBg : root.hoverBg
+                    onContainsMouseChanged: parent.color = containsMouse ? root.selectedBg : root.hoverBg
                     onClicked: confirmSave()
                 }
             }
@@ -320,7 +320,7 @@ Panel {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     hoverEnabled: true
-                    onContainsMouseChanged: parent.parent.color = containsMouse ? Qt.darker(Color.bar.text, 1.1) : Qt.darker(Color.bar.background, 1.05)
+                    onContainsMouseChanged: parent.color = containsMouse ? Qt.darker(Color.bar.text, 1.1) : Qt.darker(Color.bar.background, 1.05)
                     onClicked: {
                         root.showingNameInput = false
                         root.lastAction = "Cancelled"

@@ -554,7 +554,10 @@ export function buildRestoreScript(profile, existing) {
         lines.push("printf '#!/bin/bash\\n%s\\n' " + shellArg(launchline) + ' > "$SPATH" && chmod 700 "$SPATH"')
         lines.push("hyprctl dispatch \"hl.dsp.focus({workspace='" + ws + "'})\" 2>>\"$LOGFILE\" || true")
         lines.push("sleep 0.3")
-        lines.push('bash "$SPATH" &')
+        // setsid + closed stdio so the launched app fully detaches and never
+        // holds a caller's stdout/stderr open (which would make a `restore`
+        // that shelled out to this script appear to hang until the app quits).
+        lines.push('setsid bash "$SPATH" >/dev/null 2>&1 &')
         lines.push('echo "[launch] ws=' + ws + " cmd='$SPATH'\" >> \"$LOGFILE\"")
 
         spawnTargets.push({
@@ -659,10 +662,22 @@ export function isFreshLogin(ageSeconds, windowSeconds) {
     return ageSeconds <= windowSeconds
 }
 
-// The once-per-session stamp. Lives in $XDG_RUNTIME_DIR (tmpfs, wiped at
-// logout), so the next real login starts with a clean slate but a shell
-// restart within the session does not re-fire the login restore.
+// The once-per-session stamp. Lives in $XDG_RUNTIME_DIR, and holds the current
+// Hyprland instance signature. Keying it to the signature - not to the file
+// merely existing - is what makes it survive a $XDG_RUNTIME_DIR that a
+// logout/login did NOT clear (fast relogin, lingering session): a stale stamp
+// from a previous Hyprland run carries the old signature and is simply
+// overwritten, while a shell restart inside the same session finds a matching
+// signature and stands down.
 export function bootAppliedMarkerPath(runtimeDir) {
     return runtimeDir.replace(/\/$/, "") + "/session-restore/applied"
+}
+
+// True when the stamp was written by the Hyprland session identified by
+// `sessionId` - i.e. this login has already been handled.
+export function bootMarkerMatches(markerContent, sessionId) {
+    if (!sessionId) return false
+    if (typeof markerContent !== "string") return false
+    return markerContent.trim() === String(sessionId).trim()
 }
 

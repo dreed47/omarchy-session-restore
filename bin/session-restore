@@ -5,7 +5,7 @@
 // shell around). Pure logic lives in ../restoreLogic.mjs; system calls in
 // ../lib/io.mjs.
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync, rmSync, openSync, closeSync, lstatSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync, rmSync, lstatSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -24,9 +24,10 @@ import {
     bootMarkerPath,
     isFreshLogin,
     bootAppliedMarkerPath,
+    bootMarkerMatches,
 } from "../restoreLogic.mjs"
 
-import { hyprctlJson, bash, bashExit, notify, hasCommand, compositorAgeSeconds } from "../lib/io.mjs"
+import { hyprctlJson, bash, bashExit, notify, hasCommand, compositorAgeSeconds, currentSessionId } from "../lib/io.mjs"
 
 // How young the compositor must be for a `--boot` run to count as a login.
 const BOOT_WINDOW = Number(process.env.SESSION_RESTORE_BOOT_WINDOW) || 120
@@ -139,15 +140,24 @@ async function passesBootGuards(args) {
         die(`cannot prepare ${markerDir}: ${e.message}`)
     }
 
+    // The stamp holds this Hyprland session's signature. A matching stamp means
+    // this login was already handled (e.g. a mid-session `omarchy restart
+    // shell`); an empty or differently-signed stamp is stale - from a previous
+    // Hyprland run whose $XDG_RUNTIME_DIR was not cleared - and is overwritten.
+    const sid = await currentSessionId()
+    let prior = ""
+    try { prior = readFileSync(marker, "utf8") } catch { /* no stamp yet */ }
+
+    if (sid && bootMarkerMatches(prior, sid)) {
+        process.stdout.write("already restored this Hyprland session - nothing to do\n")
+        return false
+    }
+
     if (args.dryRun) return true
 
     try {
-        closeSync(openSync(marker, "wx"))
+        writeFileSync(marker, (sid || "1") + "\n")
     } catch (e) {
-        if (e.code === "EEXIST") {
-            process.stdout.write("already restored once this session - nothing to do\n")
-            return false
-        }
         die(`cannot write ${marker}: ${e.message}`)
     }
     return true

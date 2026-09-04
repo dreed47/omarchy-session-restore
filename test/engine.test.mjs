@@ -15,6 +15,7 @@ import {
     parseEtimes,
     isFreshLogin,
     bootAppliedMarkerPath,
+    bootMarkerMatches,
 } from "../restoreLogic.mjs"
 
 const HOME = "/home/user"
@@ -310,4 +311,20 @@ test("isFreshLogin: unknown age is treated as a login", () => {
 test("bootAppliedMarkerPath lives under the runtime dir", () => {
     assert.equal(bootAppliedMarkerPath("/run/user/1000"), "/run/user/1000/session-restore/applied")
     assert.equal(bootAppliedMarkerPath("/run/user/1000/"), "/run/user/1000/session-restore/applied")
+})
+
+test("bootMarkerMatches: same signature = this login already handled", () => {
+    const sig = "abc123_1788485485_536739381"
+    assert.equal(bootMarkerMatches(sig + "\n", sig), true)
+    assert.equal(bootMarkerMatches("  " + sig + "  ", sig), true)
+})
+
+test("bootMarkerMatches: stale / empty / different stamp does not match", () => {
+    const sig = "abc123_1788485485_536739381"
+    assert.equal(bootMarkerMatches("", sig), false)              // pre-2.x empty stamp
+    assert.equal(bootMarkerMatches("\n", sig), false)
+    assert.equal(bootMarkerMatches("old_1788400000_1\n", sig), false)  // previous Hyprland run
+    assert.equal(bootMarkerMatches(sig, null), false)            // no signature this run
+    assert.equal(bootMarkerMatches(sig, ""), false)
+    assert.equal(bootMarkerMatches(null, sig), false)
 })
