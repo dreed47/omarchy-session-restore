@@ -200,12 +200,16 @@ export function resolveBrowserProfile(btype, cmdline, home) {
     if (btype === "chromium") {
         m = /--user-data-dir=("?)([^"\s]+)\1/.exec(cmd)
         if (m) return m[2]
-        if (/google-chrome/i.test(cmd)) return h + "/.config/google-chrome"
-        if (/chromium/i.test(cmd)) return h + "/.config/chromium"
+        // Order matters: the branded chromium forks all contain "chrom" in
+        // their path, so they are checked before the generic chrome fallback.
         if (/brave/i.test(cmd)) return h + "/.config/BraveSoftware/Brave-Browser"
         if (/vivaldi/i.test(cmd)) return h + "/.config/vivaldi"
         if (/edge/i.test(cmd)) return h + "/.config/microsoft-edge"
         if (/opera/i.test(cmd)) return h + "/.config/opera"
+        if (/chromium/i.test(cmd)) return h + "/.config/chromium"
+        // Google Chrome ships at /opt/google/chrome/chrome (no dash, no
+        // --user-data-dir), so match "chrome" anywhere in the command line.
+        if (/chrome/i.test(cmd)) return h + "/.config/google-chrome"
         return null
     } else if (btype === "firefox") {
         m = /--profile(=|\s+)(\S+)/.exec(cmd)
@@ -391,37 +395,74 @@ export function buildRestoreScript(profile, existing) {
     var matchedAddrs = []
     var browserCloseAddrs = []
 
+    // Match running windows to profile windows in three passes, most confident
+    // first, so multi-window same-class apps (two browser windows, three
+    // terminals) are not shuffled between workspaces when their titles have
+    // drifted since the snapshot. Each existing window and each profile window
+    // is claimed at most once.
     if (existing && existing.length > 0) {
-        for (var i = 0; i < existing.length; i++) {
-            var e = existing[i]
-            var bestIdx = -1
-            for (var p = 0; p < profile.windows.length; p++) {
-                if (matched[p]) continue
-                if (e.class === profile.windows[p].class) {
-                    if (bestIdx === -1) bestIdx = p
-                    if (e.title === profile.windows[p].title) {
-                        bestIdx = p
-                        break
-                    }
-                }
+        var eUsed = []
+        for (var eu = 0; eu < existing.length; eu++) eUsed[eu] = false
+
+        // Bind existing window `e` to profile window index `pIdx`. A browser
+        // window whose snapshot carried tabs is closed here and respawned
+        // fresh in Phase 3 (so `matched` is left false); anything else is
+        // moved into place.
+        var claim = function (e, pIdx) {
+            var target = profile.windows[pIdx]
+            if (target.browser && target.tabs && target.tabs.length > 0) {
+                browserCloseAddrs.push(e.address)
+                return
             }
-            if (bestIdx >= 0) {
-                var target = profile.windows[bestIdx]
-                if (target.browser && target.tabs && target.tabs.length > 0) {
-                    browserCloseAddrs.push(e.address)
-                    continue
-                }
-                matched[bestIdx] = true
-                matchedAddrs.push(e.address)
-                var tws = safeWorkspace(target.workspace)
-                if (tws !== null && String(e.workspace.name) !== String(target.workspace)) {
-                    toMove.push({ addr: e.address, ws: tws, cls: e.class, splitRatio: target.splitRatio, fullscreen: target.fullscreen, e_floating: e.floating, e_fullscreen: e.fullscreen })
-                }
-                if (target.floating) {
-                    toFloat.push({ addr: e.address, pos: target.position, size: target.size, e_floating: e.floating, e_fullscreen: e.fullscreen })
-                }
+            matched[pIdx] = true
+            matchedAddrs.push(e.address)
+            var eWs = e.workspace ? String(e.workspace.name) : ""
+            var tws = safeWorkspace(target.workspace)
+            if (tws !== null && eWs !== String(target.workspace)) {
+                toMove.push({ addr: e.address, ws: tws, cls: e.class, splitRatio: target.splitRatio, fullscreen: target.fullscreen, e_floating: e.floating, e_fullscreen: e.fullscreen })
+            }
+            if (target.floating) {
+                toFloat.push({ addr: e.address, pos: target.position, size: target.size, e_floating: e.floating, e_fullscreen: e.fullscreen })
             }
         }
+
+        // Run `pick(e)` for every still-free existing window; a non-negative
+        // return is the profile index to bind it to.
+        var pass = function (pick) {
+            for (var i = 0; i < existing.length; i++) {
+                if (eUsed[i]) continue
+                var idx = pick(existing[i])
+                if (idx < 0) continue
+                eUsed[i] = true
+                claim(existing[i], idx)
+            }
+        }
+
+        // 1. exact class + title - the confident match.
+        pass(function (e) {
+            for (var p = 0; p < profile.windows.length; p++) {
+                if (!matched[p] && e.class === profile.windows[p].class && e.title === profile.windows[p].title) return p
+            }
+            return -1
+        })
+
+        // 2. same class, already on the workspace the profile wants it on.
+        //    Disambiguates same-class windows whose titles no longer match.
+        pass(function (e) {
+            var ews = e.workspace ? String(e.workspace.name) : ""
+            for (var p = 0; p < profile.windows.length; p++) {
+                if (!matched[p] && e.class === profile.windows[p].class && ews === String(profile.windows[p].workspace)) return p
+            }
+            return -1
+        })
+
+        // 3. same class, first free slot - arbitrary order, last resort.
+        pass(function (e) {
+            for (var p = 0; p < profile.windows.length; p++) {
+                if (!matched[p] && e.class === profile.windows[p].class) return p
+            }
+            return -1
+        })
     }
 
     // Phase 0: pin each snapshotted workspace to its capture-time monitor

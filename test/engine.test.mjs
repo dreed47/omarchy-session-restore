@@ -37,6 +37,17 @@ test("resolveBrowserProfile falls back to per-browser chromium defaults", () => 
     assert.equal(resolveBrowserProfile("chromium", "chromium --foo", HOME), HOME + "/.config/chromium")
 })
 
+test("resolveBrowserProfile recognises Google Chrome's real /opt path", () => {
+    // /proc cmdline for a Linux Google Chrome window - no dash, no --user-data-dir
+    assert.equal(resolveBrowserProfile("chromium", "/opt/google/chrome/chrome", HOME), HOME + "/.config/google-chrome")
+    assert.equal(resolveBrowserProfile("chromium", "/opt/google/chrome/chrome --new-window", HOME), HOME + "/.config/google-chrome")
+})
+
+test("resolveBrowserProfile keeps branded forks off the chrome fallback", () => {
+    assert.equal(resolveBrowserProfile("chromium", "/opt/brave.com/brave/brave", HOME), HOME + "/.config/BraveSoftware/Brave-Browser")
+    assert.equal(resolveBrowserProfile("chromium", "/usr/lib/chromium/chromium", HOME), HOME + "/.config/chromium")
+})
+
 test("resolveBrowserProfile handles firefox -P and default base", () => {
     assert.equal(resolveBrowserProfile("firefox", "firefox --profile /tmp/ff", HOME), "/tmp/ff")
     assert.equal(resolveBrowserProfile("firefox", "firefox -P work", HOME), HOME + "/.mozilla/firefox/work")
@@ -205,6 +216,47 @@ test("buildRestoreScript moves an already-open window instead of spawning it", (
     assert.doesNotMatch(script, /spawn-0\.sh/) // code no longer spawned
     assert.match(script, /spawn-1\.sh/)        // kitty still spawned
     assert.equal(count, 2)                      // 1 move + 1 spawn
+})
+
+test("buildRestoreScript: two same-class windows keep their own workspaces when titles have drifted", () => {
+    // Regression: a browser window saved on ws1 was being moved to ws6 because
+    // its title no longer matched and the class-only fallback assigned by array
+    // order. Pass 2 (class + current-workspace agreement) fixes it.
+    const profile = {
+        windows: [
+            { class: "google-chrome", title: "Home Assistant - Chrome", workspace: "6", monitor: "M2", command: "chrome", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0, browser: "chromium", tabs: null },
+            { class: "google-chrome", title: "IPTV Manager - Chrome", workspace: "1", monitor: "M1", command: "chrome", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0, browser: "chromium", tabs: null },
+        ],
+    }
+    // Both chrome windows are already back on their right workspaces, but their
+    // titles have changed since the snapshot (fresh session).
+    const existing = [
+        { class: "google-chrome", title: "New Tab", address: "0xIPTV", workspace: { name: "1" }, floating: false, fullscreen: 0 },
+        { class: "google-chrome", title: "New Tab", address: "0xHASS", workspace: { name: "6" }, floating: false, fullscreen: 0 },
+    ]
+    const { script } = buildRestoreScript(profile, existing)
+    // No window is moved off the workspace it is already on.
+    assert.doesNotMatch(script, /window\.move\(\{workspace=/)
+    // And neither profile window is treated as missing (no spawn).
+    assert.doesNotMatch(script, /spawn-\d+\.sh/)
+})
+
+test("buildRestoreScript: exact title match wins over array order", () => {
+    const profile = {
+        windows: [
+            { class: "foot", title: "term-A", workspace: "2", monitor: "M1", command: "foot", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0, browser: null, tabs: null },
+            { class: "foot", title: "term-B", workspace: "3", monitor: "M1", command: "foot", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0, browser: null, tabs: null },
+        ],
+    }
+    // One running foot, title matches the *second* profile entry, and it is on
+    // the wrong workspace - it must move to ws3, not ws2.
+    const existing = [
+        { class: "foot", title: "term-B", address: "0xB", workspace: { name: "9" }, floating: false, fullscreen: 0 },
+    ]
+    const { script } = buildRestoreScript(profile, existing)
+    assert.match(script, /window\.move\(\{workspace='3', window='address:0xB'/)
+    assert.doesNotMatch(script, /workspace='2', window='address:0xB'/)
+    assert.match(script, /spawn-0\.sh/) // term-A (ws2) still needs spawning
 })
 
 test("buildRestoreScript skips windows with unsafe metadata", () => {
