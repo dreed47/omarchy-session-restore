@@ -19,7 +19,7 @@ import {
     buildBrowserLaunchCommands,
 } from "../restoreLogic.mjs"
 
-const DIR = "/home/user/.config/omarchy/workspace-restorer"
+const DIR = "/home/user/.config/omarchy/session-restore"
 
 // --- sanitizeProfileName ---
 

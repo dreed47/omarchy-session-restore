@@ -9,12 +9,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22", "24"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node-version }}
 
       - name: Install
         run: npm install --ignore-scripts
@@ -22,5 +26,26 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      - name: Sources parse
+        run: |
+          node --check restoreLogic.mjs
+          node --check lib/io.mjs
+          node --check bin/session-restore
+
+      - name: CLI --help works
+        run: node bin/session-restore --help
+
       - name: Validate manifest.json
-        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest.json OK')"
+        run: node scripts/validate-manifest.mjs
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Byte-compile tab-capture helper
+        run: python -m py_compile scripts/capture_tabs.py

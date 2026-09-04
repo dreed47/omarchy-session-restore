@@ -1,0 +1,354 @@
+#!/usr/bin/env node
+// session-restore - save the current apps + window layout and restore them,
+// on demand or on login. This CLI is the single restore engine: the bar
+// widget shells out to it, and so does the post-boot hook (which runs with no
+// shell around). Pure logic lives in ../restoreLogic.mjs; system calls in
+// ../lib/io.mjs.
+
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync, rmSync, lstatSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+
+import {
+    validProfilePath,
+    sanitizeProfileName,
+    generateDefaultName,
+    procInfoScript,
+    parseProcInfo,
+    assembleWindows,
+    tabCaptureInvocations,
+    parseTabResults,
+    buildSnapshot,
+    buildRestoreScript,
+    wrapRestoreRunner,
+    bootMarkerPath,
+    isFreshLogin,
+    bootAppliedMarkerPath,
+    bootMarkerMatches,
+} from "../restoreLogic.mjs"
+
+import { hyprctlJson, bash, bashExit, notify, hasCommand, compositorAgeSeconds, currentSessionId } from "../lib/io.mjs"
+
+// How young the compositor must be for a `--boot` run to count as a login.
+const BOOT_WINDOW = Number(process.env.SESSION_RESTORE_BOOT_WINDOW) || 120
+
+const PLUGIN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const CAPTURE_SCRIPT = join(PLUGIN_DIR, "scripts", "capture_tabs.py")
+
+const HOME = process.env.HOME || ""
+const PROFILE_DIR = process.env.SESSION_RESTORE_DIR
+    || join(HOME, ".config", "omarchy", "session-restore")
+
+function die(msg, code = 1) {
+    process.stderr.write(`session-restore: ${msg}\n`)
+    process.exit(code)
+}
+
+function ensureProfileDir() {
+    mkdirSync(PROFILE_DIR, { recursive: true })
+}
+
+function readBootMarker() {
+    const p = bootMarkerPath(PROFILE_DIR)
+    return existsSync(p) ? readFileSync(p, "utf8").trim() : ""
+}
+
+function resolveName(args, { forWrite }) {
+    if (args.boot) {
+        const name = readBootMarker()
+        if (!name) return null
+        return name
+    }
+    if (args.positionals.length > 0) return args.positionals[0]
+    if (forWrite) return generateDefaultName()
+    return null
+}
+
+function parseArgs(argv) {
+    const out = { boot: false, json: false, clear: false, dryRun: false, positionals: [] }
+    for (const a of argv) {
+        if (a === "--boot") out.boot = true
+        else if (a === "--json") out.json = true
+        else if (a === "--clear") out.clear = true
+        else if (a === "--dry-run") out.dryRun = true
+        else if (a === "-h" || a === "--help") out.help = true
+        else if (a.startsWith("--")) die(`unknown option: ${a}`)
+        else out.positionals.push(a)
+    }
+    return out
+}
+
+// --- commands -------------------------------------------------------------
+
+async function cmdSave(args) {
+    const name = resolveName(args, { forWrite: true })
+    if (args.boot && !name) die("save --boot: no boot profile is set (use `boot-profile <name>` first)")
+
+    const path = validProfilePath(name, PROFILE_DIR)
+    if (path === null) die(`invalid profile name: ${name}`)
+
+    if (!(await hasCommand("python3"))) {
+        process.stderr.write("session-restore: python3 not found - browser tabs will not be captured\n")
+    }
+
+    const clients = await hyprctlJson("clients")
+    const pids = [...new Set(clients.map((c) => c.pid))]
+    const procInfo = parseProcInfo(await bash(procInfoScript(pids)))
+    const monitors = await hyprctlJson("monitors")
+
+    const windows = assembleWindows({ clients, monitors, procInfo, home: HOME })
+    const invocations = tabCaptureInvocations(windows, CAPTURE_SCRIPT)
+    const tabResults = invocations.length > 0
+        ? parseTabResults(await bash(invocations.join("; ")))
+        : {}
+
+    const snapshot = buildSnapshot({ clients, monitors, procInfo, tabResults, home: HOME })
+
+    ensureProfileDir()
+    writeFileSync(path, JSON.stringify(snapshot, null, 2))
+    process.stdout.write(`saved "${name}" (${snapshot.windows.length} windows)\n`)
+}
+
+// Login guards for `restore --boot`. Returns false (caller should stop) when
+// this shell start is not a fresh login, or this login was already handled.
+// `--dry-run` runs the checks but never consumes the once-per-session stamp.
+async function passesBootGuards(args) {
+    const age = await compositorAgeSeconds()
+    if (!isFreshLogin(age, BOOT_WINDOW)) {
+        process.stdout.write(`hyprland has been up ${age}s - not a login, nothing to do\n`)
+        return false
+    }
+
+    const runtimeDir = process.env.XDG_RUNTIME_DIR
+    if (!runtimeDir) {
+        process.stderr.write("session-restore: no XDG_RUNTIME_DIR - proceeding on the compositor-age check alone\n")
+        return true
+    }
+
+    const marker = bootAppliedMarkerPath(runtimeDir)
+    const markerDir = dirname(marker)
+    try {
+        if (existsSync(markerDir) && lstatSync(markerDir).isSymbolicLink()) {
+            die(`refusing to use ${markerDir}: it is a symlink`)
+        }
+        mkdirSync(markerDir, { recursive: true, mode: 0o700 })
+        const st = lstatSync(markerDir)
+        if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
+            die(`refusing to use ${markerDir}: not owned by this user`)
+        }
+    } catch (e) {
+        die(`cannot prepare ${markerDir}: ${e.message}`)
+    }
+
+    // The stamp holds this Hyprland session's signature. A matching stamp means
+    // this login was already handled (e.g. a mid-session `omarchy restart
+    // shell`); an empty or differently-signed stamp is stale - from a previous
+    // Hyprland run whose $XDG_RUNTIME_DIR was not cleared - and is overwritten.
+    const sid = await currentSessionId()
+    let prior = ""
+    try { prior = readFileSync(marker, "utf8") } catch { /* no stamp yet */ }
+
+    if (sid && bootMarkerMatches(prior, sid)) {
+        process.stdout.write("already restored this Hyprland session - nothing to do\n")
+        return false
+    }
+
+    if (args.dryRun) return true
+
+    try {
+        writeFileSync(marker, (sid || "1") + "\n")
+    } catch (e) {
+        die(`cannot write ${marker}: ${e.message}`)
+    }
+    return true
+}
+
+async function cmdRestore(args) {
+    const name = resolveName(args, { forWrite: false })
+    if (!name) {
+        if (args.boot) {
+            process.stdout.write("no boot profile set - nothing to restore\n")
+            return
+        }
+        die("restore: profile name required")
+    }
+
+    const path = validProfilePath(name, PROFILE_DIR)
+    if (path === null) die(`invalid profile name: ${name}`)
+    if (!existsSync(path)) {
+        // For --boot this is a stale .boot-profile pointing at a deleted
+        // profile - not worth dying over, and not worth burning the stamp.
+        if (args.boot) {
+            process.stdout.write(`boot profile "${name}" no longer exists - nothing to restore\n`)
+            return
+        }
+        die(`no such profile: ${name}`)
+    }
+
+    // Only now, with a real profile to restore, run the login guards (which
+    // write the once-per-session stamp).
+    if (args.boot && !(await passesBootGuards(args))) return
+
+    let profile
+    try {
+        profile = JSON.parse(readFileSync(path, "utf8"))
+    } catch {
+        die(`profile is not valid JSON: ${name}`)
+    }
+    if (!profile || !Array.isArray(profile.windows) || profile.windows.length === 0) {
+        die(`profile is empty: ${name}`)
+    }
+
+    let existing = []
+    try {
+        existing = await hyprctlJson("clients")
+    } catch {
+        existing = []
+    }
+
+    const { script, count } = buildRestoreScript(profile, existing)
+
+    if (args.dryRun) {
+        process.stdout.write(script + "\n")
+        process.stderr.write(`session-restore: dry run - ${count} windows would be moved/spawned\n`)
+        return
+    }
+
+    const code = await bashExit(wrapRestoreRunner(script))
+
+    if (code !== 0) {
+        await notify("Restore failed", "Not all windows could be restored")
+        die(`restore script exited ${code}`, code)
+    }
+    await notify("Session restored", `${count} windows`)
+    process.stdout.write(`restored "${name}" (${count} windows)\n`)
+}
+
+function listProfiles() {
+    try {
+        return readdirSync(PROFILE_DIR)
+            .filter((f) => f.endsWith(".json"))
+            .map((f) => f.slice(0, -5))
+            .sort()
+    } catch {
+        return []
+    }
+}
+
+function cmdList(args) {
+    const names = listProfiles()
+    if (args.json) {
+        process.stdout.write(JSON.stringify(names) + "\n")
+        return
+    }
+    const boot = readBootMarker()
+    for (const n of names) process.stdout.write(`${n === boot ? "* " : "  "}${n}\n`)
+}
+
+// window count + save time for one profile, for the panel's row detail.
+function profileMeta(name) {
+    try {
+        const p = JSON.parse(readFileSync(join(PROFILE_DIR, name + ".json"), "utf8"))
+        return {
+            name,
+            windows: Array.isArray(p.windows) ? p.windows.length : 0,
+            savedAt: typeof p.timestamp === "number" ? p.timestamp : null,
+        }
+    } catch {
+        return { name, windows: 0, savedAt: null }
+    }
+}
+
+// Everything the bar widget needs in one call: the profiles (with window
+// counts and save times) plus which one, if any, is armed for login.
+function cmdStatus(args) {
+    const names = listProfiles()
+    const boot = readBootMarker()
+    const bootExists = boot !== "" && names.includes(boot)
+    if (args.json) {
+        process.stdout.write(JSON.stringify({
+            profiles: names.map(profileMeta),
+            boot,
+            bootExists,
+        }) + "\n")
+        return
+    }
+    for (const n of names) {
+        const m = profileMeta(n)
+        process.stdout.write(`${n === boot ? "* " : "  "}${n}  (${m.windows} window${m.windows === 1 ? "" : "s"})\n`)
+    }
+    process.stdout.write(`\nlogin profile: ${boot || "(none)"}` +
+        (boot && !bootExists ? " (missing!)" : "") + "\n")
+}
+
+function cmdDelete(args) {
+    const name = args.positionals[0]
+    if (!name) die("delete: profile name required")
+    const path = validProfilePath(name, PROFILE_DIR)
+    if (path === null) die(`invalid profile name: ${name}`)
+    try {
+        unlinkSync(path)
+    } catch (e) {
+        die(`could not delete ${name}: ${e.message}`)
+    }
+    if (readBootMarker() === name) rmSync(bootMarkerPath(PROFILE_DIR), { force: true })
+    process.stdout.write(`deleted "${name}"\n`)
+}
+
+function cmdBootProfile(args) {
+    const marker = bootMarkerPath(PROFILE_DIR)
+    if (args.clear) {
+        rmSync(marker, { force: true })
+        process.stdout.write("boot profile cleared\n")
+        return
+    }
+    const name = args.positionals[0]
+    if (!name) {
+        process.stdout.write(readBootMarker() + "\n")
+        return
+    }
+    if (sanitizeProfileName(name) === null) die(`invalid profile name: ${name}`)
+    if (!existsSync(validProfilePath(name, PROFILE_DIR))) die(`no such profile: ${name}`)
+    ensureProfileDir()
+    writeFileSync(marker, name + "\n")
+    process.stdout.write(`boot profile set to "${name}"\n`)
+}
+
+const HELP = `session-restore - save and restore your apps + window layout
+
+Usage:
+  session-restore save [name] [--boot]     capture the current layout
+  session-restore restore [name] [--boot]  reopen a saved layout
+  session-restore list [--json]            list saved profiles (* = login profile)
+  session-restore status [--json]          profiles + which one restores at login
+  session-restore delete <name>            remove a saved profile
+  session-restore boot-profile [name|--clear]
+                                           get/set the profile restored on login
+
+Profiles live in ${PROFILE_DIR}
+(override with SESSION_RESTORE_DIR).
+`
+
+async function main() {
+    const [, , sub, ...rest] = process.argv
+    if (!sub || sub === "help" || sub === "-h" || sub === "--help") {
+        process.stdout.write(HELP)
+        return
+    }
+    const args = parseArgs(rest)
+    if (args.help) {
+        process.stdout.write(HELP)
+        return
+    }
+    switch (sub) {
+        case "save": return cmdSave(args)
+        case "restore": return cmdRestore(args)
+        case "list": return cmdList(args)
+        case "status": return cmdStatus(args)
+        case "delete": case "rm": return cmdDelete(args)
+        case "boot-profile": return cmdBootProfile(args)
+        default: die(`unknown command: ${sub} (try --help)`)
+    }
+}
+
+main().catch((e) => die(e.message))
