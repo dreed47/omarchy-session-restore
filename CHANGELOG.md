@@ -30,6 +30,13 @@ by Davedes83, renamed to **Session Restore**.
   (`session-restore boot-profile <name>`); a no-op until then.
 - `session-restore.service` IPC target with `applyLogin()` to test the login
   path without logging out.
+- **Bar panel redesign.** Rebuilt on the Omarchy `Ui` kit: a hero showing the
+  armed profile, a labelled "Save current session" button, per-row **pin** to
+  arm/disarm login restore, an **update-from-current-layout** action on the
+  armed profile, two-click delete, an "Auto-restore at login" toggle, an empty
+  state, a Node-missing banner, and a tooltip on every control.
+- `session-restore status [--json]` - profiles plus the armed login profile in
+  one call (what the panel polls).
 
 ### Changed
 
@@ -56,12 +63,6 @@ by Davedes83, renamed to **Session Restore**.
   [docs/tiled-layout-restore.md](docs/tiled-layout-restore.md) for the trigger
   condition and, when this plugin ships to the marketplace, the note to add on
   the upstream thread.
-
-### Planned in this line
-
-- Bar-panel controls: pin boot profile (star toggle on the profile row),
-  toggle restore-on-login, and "update boot profile from the current layout".
-  Until these land, the boot profile is set from the CLI.
 
 ## [1.1.1] - 2026-08-30
 

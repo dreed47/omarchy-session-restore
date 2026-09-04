@@ -57,28 +57,29 @@ omarchy restart shell
 ## Usage
 
 1. Click the bar widget to open the panel
-2. Click **Take Snapshot** to capture your current layout
-3. Enter a name for the profile (e.g. `coding`, `media`)
-4. Click a profile name to restore that layout
-5. Click the delete action to remove a profile
+2. **Save current session** → name it (e.g. `coding`, `media`)
+3. Click a session row to restore that layout now
+4. **Pin** a row to have it restore automatically at login
+5. Delete is a two-click confirm on the trash action
 
 ### Restore after reboot
 
-Pick the profile to bring back at login (the *boot profile*):
+Open the panel and click the **pin** on a saved session to arm it — that profile
+now restores automatically a few seconds after each login. The pinned row is
+tinted, and the header shows which profile is armed. Click the pin again (or the
+**Auto-restore at login** toggle) to turn it off.
 
-```bash
-bin/session-restore boot-profile coding
-```
+The pinned row also gets an **update** action that overwrites the profile with
+your current window layout, so you can keep the login session current without
+re-pinning.
 
-That's the whole switch. The plugin's `service` half runs a few seconds after
-each login and restores that profile — once. It does **not** re-fire when the
-shell is merely restarted mid-session: it checks that the compositor came up
-moments ago and drops a once-per-session stamp in `$XDG_RUNTIME_DIR`.
+From the CLI it's `bin/session-restore boot-profile <name>` /
+`bin/session-restore boot-profile --clear`.
 
-Clear it with `bin/session-restore boot-profile --clear`.
-
-> A bar-panel toggle for this (pin star + "restore on login" switch) is coming;
-> for now it's the CLI.
+Login restore fires **once per login**. It does not re-run when the shell is
+merely restarted mid-session: it checks the compositor came up moments ago and
+writes a per-session stamp (keyed to the Hyprland instance) in
+`$XDG_RUNTIME_DIR`.
 
 To test the login path without logging out:
 

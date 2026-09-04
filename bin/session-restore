@@ -224,22 +224,40 @@ async function cmdRestore(args) {
     process.stdout.write(`restored "${name}" (${count} windows)\n`)
 }
 
-function cmdList(args) {
-    let names = []
+function listProfiles() {
     try {
-        names = readdirSync(PROFILE_DIR)
+        return readdirSync(PROFILE_DIR)
             .filter((f) => f.endsWith(".json"))
             .map((f) => f.slice(0, -5))
             .sort()
     } catch {
-        names = []
+        return []
     }
+}
+
+function cmdList(args) {
+    const names = listProfiles()
     if (args.json) {
         process.stdout.write(JSON.stringify(names) + "\n")
-    } else {
-        const boot = readBootMarker()
-        for (const n of names) process.stdout.write(`${n === boot ? "* " : "  "}${n}\n`)
+        return
     }
+    const boot = readBootMarker()
+    for (const n of names) process.stdout.write(`${n === boot ? "* " : "  "}${n}\n`)
+}
+
+// Everything the bar widget needs in one call: the profile list plus which one
+// (if any) is armed for login.
+function cmdStatus(args) {
+    const profiles = listProfiles()
+    const boot = readBootMarker()
+    const status = { profiles, boot, bootExists: boot !== "" && profiles.includes(boot) }
+    if (args.json) {
+        process.stdout.write(JSON.stringify(status) + "\n")
+        return
+    }
+    for (const n of profiles) process.stdout.write(`${n === boot ? "* " : "  "}${n}\n`)
+    process.stdout.write(`\nlogin profile: ${boot || "(none)"}` +
+        (boot && !status.bootExists ? " (missing!)" : "") + "\n")
 }
 
 function cmdDelete(args) {
@@ -280,7 +298,8 @@ const HELP = `session-restore - save and restore your apps + window layout
 Usage:
   session-restore save [name] [--boot]     capture the current layout
   session-restore restore [name] [--boot]  reopen a saved layout
-  session-restore list [--json]            list saved profiles (* = boot profile)
+  session-restore list [--json]            list saved profiles (* = login profile)
+  session-restore status [--json]          profiles + which one restores at login
   session-restore delete <name>            remove a saved profile
   session-restore boot-profile [name|--clear]
                                            get/set the profile restored on login
@@ -304,6 +323,7 @@ async function main() {
         case "save": return cmdSave(args)
         case "restore": return cmdRestore(args)
         case "list": return cmdList(args)
+        case "status": return cmdStatus(args)
         case "delete": case "rm": return cmdDelete(args)
         case "boot-profile": return cmdBootProfile(args)
         default: die(`unknown command: ${sub} (try --help)`)
