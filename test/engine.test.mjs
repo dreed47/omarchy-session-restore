@@ -270,15 +270,18 @@ test("buildRestoreScript: exact title match wins over array order", () => {
     assert.match(script, /spawn-0\.sh/) // term-A (ws2) still needs spawning
 })
 
-test("buildRestoreScript waits for the closed browser's pid instead of a fixed sleep", () => {
-    // Regression: a flat `sleep 1.5` after closing a matched browser window
-    // was not always long enough. If the old process had not actually quit by
-    // the time the relaunch ran, the "new" browser attached to the still-open
-    // window over IPC and added tabs onto its existing ones instead of
-    // replacing it - doubling every tab.
+test("buildRestoreScript leaves an already-running browser's tabs alone", () => {
+    // An already-open browser is matched and (if needed) moved like any other
+    // window - it is never closed or relaunched to force its tabs to match
+    // the snapshot. Only a browser that is NOT currently running gets its
+    // captured tabs launched (Phase 3, tested separately). Repeatedly closing
+    // and relaunching an already-running, multi-process browser to sync its
+    // tabs kept finding new ways to duplicate them (cmdline pollution, pinned
+    // tabs, Chrome's own crash-restore, a close/relaunch race) across several
+    // fix attempts, so that mechanism was removed rather than patched again.
     const profile = {
         windows: [{
-            class: "google-chrome", title: "Editor", workspace: "1", monitor: "DP-1",
+            class: "google-chrome", title: "Editor", workspace: "3", monitor: "DP-1",
             command: "chrome", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
             browser: "chromium", browserProfile: "/home/user/.config/google-chrome",
             tabs: [{ url: "https://example.com/" }],
@@ -287,11 +290,13 @@ test("buildRestoreScript waits for the closed browser's pid instead of a fixed s
     const existing = [
         { class: "google-chrome", title: "Editor", address: "0xaaaa", pid: 4242, workspace: { name: "1" }, floating: false, fullscreen: 0 },
     ]
-    const { script } = buildRestoreScript(profile, existing)
-    assert.match(script, /kill -0 4242/)
-    assert.doesNotMatch(script, /^sleep 1\.5$/m)
-    // the wait must run before the relaunch
-    assert.ok(script.indexOf("kill -0 4242") < script.indexOf("SPATH="))
+    const { script, count } = buildRestoreScript(profile, existing)
+    assert.doesNotMatch(script, /window\.close/)
+    assert.doesNotMatch(script, /kill -0/)
+    assert.doesNotMatch(script, /SPATH=/)
+    assert.doesNotMatch(script, /example\.com/) // its captured tab is never launched
+    assert.match(script, /window\.move\(\{workspace='3', window='address:0xaaaa'/) // still moved like any window
+    assert.equal(count, 1)
 })
 
 test("buildRestoreScript resets a spawned Chromium window's crash flag before launch", () => {

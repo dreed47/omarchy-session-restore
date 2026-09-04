@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.0.4] - 2026-09-04
+
+2.0.1-2.0.3 each patched a new cause of the same "browser tab restore
+duplicates tabs" report, and a live user test after 2.0.3 still duplicated -
+now with the pinned-tab count untouched and the open-tab count multiplying on
+every single restore click. All five prior causes traced back to one
+mechanism: closing and relaunching an *already-running* browser window to
+force its tabs to match the saved snapshot. That depends on a multi-process
+browser's shutdown and IPC-driven tab-adding finishing in a way a shell
+script cannot fully observe or control, and kept finding new races no matter
+how many of its individual failure modes got patched (cmdline pollution,
+pinned tabs, Chrome's own crash-restore, the close/relaunch race).
+
+### Changed
+
+- **Removed the close-and-relaunch mechanism entirely.** Restore now leaves
+  an already-running browser's tabs alone - the window is matched and moved
+  to its saved workspace like any other window, nothing is closed and
+  nothing is relaunched. Captured tabs are only ever launched for a browser
+  window that is *not* currently running, which is the actual reboot /
+  login-restore case this plugin exists for, where there's nothing already
+  open to duplicate against. That spawn path is unchanged and keeps the
+  cmdline-pollution strip (`browserRelaunchBase`) and Chrome crash-flag reset
+  (`resetChromiumCrashFlagLines`) from 2.0.1/2.0.2.
+- Removed the pid-wait-then-relaunch code added in 2.0.3
+  (`waitForPidExitLines` and the close dispatch it supported) along with the
+  mechanism it existed to make safer.
+
+Verified live: restoring a session with an already-open, multi-tab Chrome
+window no longer changes its tab count at all.
+
 ## [2.0.3] - 2026-09-04
 
 Consolidates the 2.0.1-2.0.3 patch releases, all chasing the same user report
