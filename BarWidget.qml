@@ -62,6 +62,20 @@ Panel {
                "-" + pad(d.getHours()) + pad(d.getMinutes())
     }
 
+    function relTime(ms) {
+        if (!ms) return ""
+        var s = Math.floor((Date.now() - ms) / 1000)
+        if (s < 45) return "just now"
+        if (s < 3600) return Math.floor(s / 60) + "m ago"
+        if (s < 86400) return Math.floor(s / 3600) + "h ago"
+        return Math.floor(s / 86400) + "d ago"
+    }
+
+    // First name in the (object) profile list, or "".
+    function firstProfileName() {
+        return root.profiles.length > 0 ? root.profiles[0].name : ""
+    }
+
     // --- bar button --------------------------------------------------------
 
     BarIconButton {
@@ -88,7 +102,7 @@ Panel {
         bar: root.bar
         open: root.opened
         contentWidth: Style.space(330)
-        contentHeight: Math.min(Style.space(840), body.implicitHeight + Style.space(52))
+        contentHeight: Math.min(Style.space(840), body.implicitHeight + Style.space(64))
 
         PanelKeyCatcher {
             anchors.fill: parent
@@ -101,7 +115,7 @@ Panel {
         Flickable {
             anchors.fill: parent
             contentWidth: width
-            contentHeight: body.implicitHeight + Style.space(52)
+            contentHeight: body.implicitHeight + Style.space(64)
             interactive: contentHeight > height
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -118,10 +132,10 @@ Panel {
                 title: "Session Restore"
                 detail: root.bootProfile !== "" ? root.bootProfile : ""
                 meta: root.bootProfile === ""
-                    ? "no login profile set"
+                    ? "save your open apps and bring them back later"
                     : (root.bootProfileMissing
-                        ? "login profile is missing"
-                        : "restores at login")
+                        ? "pinned session is missing — pin another"
+                        : "this session reopens at login")
             }
 
             PanelSeparator { Layout.fillWidth: true }
@@ -192,6 +206,7 @@ Panel {
                 PanelToolTip {
                     visible: saveMouse.containsMouse
                     text: "Snapshot every open window — app, workspace, size, floating state and browser tabs — into a named profile"
+                    fontFamily: Style.font.family
                 }
             }
 
@@ -280,12 +295,15 @@ Panel {
 
             Text {
                 Layout.fillWidth: true
-                visible: root.profiles.length === 0 && !root.cliMissing
+                visible: !root.cliMissing
                 textFormat: Text.PlainText
-                text: "None yet. Save the current session above."
-                color: Qt.darker(Color.foreground, 1.5)
+                text: root.profiles.length === 0
+                    ? "Save the current session above to get started."
+                    : "A session is the apps you have open and where each one sits — workspace, monitor, size, floating state — plus browser tabs."
+                color: Qt.darker(Color.foreground, 1.55)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
+                lineHeight: 1.15
                 wrapMode: Text.WordWrap
             }
 
@@ -301,13 +319,19 @@ Panel {
 
                     delegate: BorderSurface {
                             id: rowSurface
-                            required property string modelData
+                            required property var modelData
                             required property int index
-                            readonly property bool isBoot: modelData === root.bootProfile
-                            readonly property bool armed: modelData === root.armedDelete
+                            readonly property string pname: modelData.name
+                            readonly property bool isBoot: pname === root.bootProfile
+                            readonly property bool armed: pname === root.armedDelete
+                            readonly property string subtitle: {
+                                var w = modelData.windows || 0
+                                var t = root.relTime(modelData.savedAt)
+                                return w + (w === 1 ? " window" : " windows") + (t ? "  ·  " + t : "")
+                            }
 
                             Layout.fillWidth: true
-                            implicitHeight: Style.space(42)
+                            implicitHeight: Style.space(50)
                             radius: Style.cornerRadius
                             color: rowSurface.isBoot
                                 ? Util.alpha(Color.accent, 0.12)
@@ -327,11 +351,12 @@ Panel {
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 enabled: !root.anyBusy
-                                onClicked: root.doRestore(rowSurface.modelData)
+                                onClicked: root.doRestore(rowSurface.pname)
                             }
                             PanelToolTip {
                                 visible: rowMouse.containsMouse
-                                text: "Restore “" + rowSurface.modelData + "” now"
+                                text: "Restore this session now — reopens its apps on their workspaces"
+                                fontFamily: Style.font.family
                             }
 
                             RowLayout {
@@ -352,18 +377,32 @@ Panel {
                                         : "Restore this session automatically at login"
                                     onClicked: rowSurface.isBoot
                                         ? root.clearBoot()
-                                        : root.setBoot(rowSurface.modelData)
+                                        : root.setBoot(rowSurface.pname)
                                 }
 
-                                Text {
+                                Column {
                                     Layout.fillWidth: true
                                     Layout.alignment: Qt.AlignVCenter
-                                    textFormat: Text.PlainText
-                                    text: rowSurface.modelData
-                                    color: Color.foreground
-                                    font.family: Style.font.family
-                                    font.pixelSize: Style.font.body
-                                    elide: Text.ElideRight
+                                    spacing: Style.space(1)
+
+                                    Text {
+                                        width: parent.width
+                                        textFormat: Text.PlainText
+                                        text: rowSurface.pname
+                                        color: Color.foreground
+                                        font.family: Style.font.family
+                                        font.pixelSize: Style.font.body
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        textFormat: Text.PlainText
+                                        text: rowSurface.subtitle
+                                        color: rowSurface.isBoot ? Color.accent : Qt.darker(Color.foreground, 1.5)
+                                        font.family: Style.font.family
+                                        font.pixelSize: Style.font.caption
+                                        elide: Text.ElideRight
+                                    }
                                 }
 
                                 // overwrite the armed profile from the current layout
@@ -372,8 +411,8 @@ Panel {
                                     iconText: "󰚰"
                                     hoverColor: Color.accent
                                     enabled: !root.anyBusy
-                                    tooltipText: "Update this profile from the current window layout"
-                                    onClicked: root.updateProfile(rowSurface.modelData)
+                                    tooltipText: "Re-save this profile from the windows open right now"
+                                    onClicked: root.updateProfile(rowSurface.pname)
                                 }
 
                                 // delete (two-click)
@@ -382,9 +421,9 @@ Panel {
                                     hoverColor: Color.urgent
                                     enabled: !root.anyBusy
                                     tooltipText: rowSurface.armed
-                                        ? "Click again to delete"
+                                        ? "Click again to delete this profile"
                                         : "Delete this profile"
-                                    onClicked: root.confirmDelete(rowSurface.modelData)
+                                    onClicked: root.confirmDelete(rowSurface.pname)
                                 }
                             }
                         }
@@ -394,21 +433,21 @@ Panel {
             // auto-restore toggle ---------------------------------------
             Toggle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Style.space(64)
+                Layout.preferredHeight: Style.space(58)
                 label: "Auto-restore at login"
                 description: root.bootProfile !== ""
-                    ? ("Profile: " + root.bootProfile)
-                    : "Pin a profile above to arm it"
+                    ? ("Reopens “" + root.bootProfile + "” on login")
+                    : "Pin a session above to arm it"
                 checked: root.bootProfile !== ""
                 onClicked: {
                     if (root.bootProfile !== "") {
                         root.clearBoot()
                     } else if (root.profiles.length === 1) {
-                        root.setBoot(root.profiles[0])
+                        root.setBoot(root.firstProfileName())
                     } else if (root.profiles.length === 0) {
                         root.lastAction = "Save a session first"
                     } else {
-                        root.lastAction = "Pin which profile to restore"
+                        root.lastAction = "Pin which session to restore"
                     }
                 }
             }

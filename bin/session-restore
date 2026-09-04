@@ -245,19 +245,40 @@ function cmdList(args) {
     for (const n of names) process.stdout.write(`${n === boot ? "* " : "  "}${n}\n`)
 }
 
-// Everything the bar widget needs in one call: the profile list plus which one
-// (if any) is armed for login.
+// window count + save time for one profile, for the panel's row detail.
+function profileMeta(name) {
+    try {
+        const p = JSON.parse(readFileSync(join(PROFILE_DIR, name + ".json"), "utf8"))
+        return {
+            name,
+            windows: Array.isArray(p.windows) ? p.windows.length : 0,
+            savedAt: typeof p.timestamp === "number" ? p.timestamp : null,
+        }
+    } catch {
+        return { name, windows: 0, savedAt: null }
+    }
+}
+
+// Everything the bar widget needs in one call: the profiles (with window
+// counts and save times) plus which one, if any, is armed for login.
 function cmdStatus(args) {
-    const profiles = listProfiles()
+    const names = listProfiles()
     const boot = readBootMarker()
-    const status = { profiles, boot, bootExists: boot !== "" && profiles.includes(boot) }
+    const bootExists = boot !== "" && names.includes(boot)
     if (args.json) {
-        process.stdout.write(JSON.stringify(status) + "\n")
+        process.stdout.write(JSON.stringify({
+            profiles: names.map(profileMeta),
+            boot,
+            bootExists,
+        }) + "\n")
         return
     }
-    for (const n of profiles) process.stdout.write(`${n === boot ? "* " : "  "}${n}\n`)
+    for (const n of names) {
+        const m = profileMeta(n)
+        process.stdout.write(`${n === boot ? "* " : "  "}${n}  (${m.windows} window${m.windows === 1 ? "" : "s"})\n`)
+    }
     process.stdout.write(`\nlogin profile: ${boot || "(none)"}` +
-        (boot && !status.bootExists ? " (missing!)" : "") + "\n")
+        (boot && !bootExists ? " (missing!)" : "") + "\n")
 }
 
 function cmdDelete(args) {
