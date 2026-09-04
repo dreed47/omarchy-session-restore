@@ -164,18 +164,30 @@ async function passesBootGuards(args) {
 }
 
 async function cmdRestore(args) {
-    if (args.boot && !(await passesBootGuards(args))) return
-
     const name = resolveName(args, { forWrite: false })
-    if (args.boot && !name) {
-        process.stdout.write("no boot profile set - nothing to restore\n")
-        return
+    if (!name) {
+        if (args.boot) {
+            process.stdout.write("no boot profile set - nothing to restore\n")
+            return
+        }
+        die("restore: profile name required")
     }
-    if (!name) die("restore: profile name required")
 
     const path = validProfilePath(name, PROFILE_DIR)
     if (path === null) die(`invalid profile name: ${name}`)
-    if (!existsSync(path)) die(`no such profile: ${name}`)
+    if (!existsSync(path)) {
+        // For --boot this is a stale .boot-profile pointing at a deleted
+        // profile - not worth dying over, and not worth burning the stamp.
+        if (args.boot) {
+            process.stdout.write(`boot profile "${name}" no longer exists - nothing to restore\n`)
+            return
+        }
+        die(`no such profile: ${name}`)
+    }
+
+    // Only now, with a real profile to restore, run the login guards (which
+    // write the once-per-session stamp).
+    if (args.boot && !(await passesBootGuards(args))) return
 
     let profile
     try {
