@@ -23,6 +23,11 @@ by Davedes83, renamed to **Session Restore**.
 
 ### Changed
 
+- `BarWidget.qml` now shells out to `bin/session-restore` for every action
+  (list / save / restore / delete) instead of carrying its own copy of the
+  snapshot and restore logic - one engine, shared with the login path.
+  "Save Session" opens the name prompt first; the snapshot is taken by the
+  CLI when Save is confirmed.
 - Plugin renamed: id `davedes.workspace-restorer` -> `io.github.dreed47.session-restore`,
   display name "Workspace Restorer" -> "Session Restore".
 - Profile storage moved: `~/.config/omarchy/workspace-restorer/` ->
@@ -33,9 +38,9 @@ by Davedes83, renamed to **Session Restore**.
 
 ### Planned in this line
 
-- `BarWidget.qml` to call `bin/session-restore` instead of carrying its own
-  copy of the snapshot/restore logic.
-- Login trigger: `post-boot` hook install script + `restore-on-login.sh`.
+- Login trigger: a `service` entry point (`kinds: ["bar-widget", "service"]`,
+  `keepLoaded`) that runs `session-restore restore --boot` once per login
+  (guarded by a runtime-dir stamp so a shell restart does not re-trigger it).
 - Bar-panel controls: pin boot profile, toggle restore-on-login, update boot
   profile from the current layout.
 
