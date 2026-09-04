@@ -86,31 +86,6 @@ export function resetChromiumCrashFlagLines(browserProfile, cls, logfileVar) {
     ]
 }
 
-// Bash lines that poll for a just-closed browser process to actually exit,
-// instead of assuming a fixed sleep was long enough.
-//
-// `hl.dsp.window.close` only sends a close request - it does not wait for the
-// process to exit. Browsers are single-instance: if the old process has not
-// actually quit yet when the next line `exec`s a fresh one with the captured
-// tab URLs, that new invocation does not replace it - it attaches to the
-// still-running instance over IPC and adds the URLs as new tabs onto the
-// window's *existing* ones, doubling every one of them. Polls `kill -0` on
-// the closed window's pid for up to ~15s (150 x 0.1s) and gives up rather
-// than hanging a restore on a browser that will not quit - the close request
-// and the relaunch that follows still happen either way, so a browser that
-// ignores this simply keeps today's tab-merging behaviour instead of failing
-// outright.
-export function waitForPidExitLines(pid, logfileVar) {
-    var n = numOr(pid)
-    if (n <= 0) return []
-    var log = logfileVar || "$LOGFILE"
-    return [
-        "BCWAIT=0",
-        "while kill -0 " + n + ' 2>/dev/null && [ $BCWAIT -lt 150 ]; do sleep 0.1; BCWAIT=$((BCWAIT+1)); done',
-        'echo "[close-browser] pid=' + n + ' gone after ${BCWAIT}x0.1s" >> "' + log + '"',
-    ]
-}
-
 export function safeWorkspace(ws) {
     if (typeof ws !== "string") return null
     if (!/^[_a-z0-9]{1,32}$/i.test(ws)) return null
@@ -479,7 +454,6 @@ export function buildRestoreScript(profile, existing) {
     var toMove = []
     var toFloat = []
     var matchedAddrs = []
-    var browserCloseTargets = [] // { addr, pid } - see waitForPidExitLines
 
     // Match running windows to profile windows in three passes, most confident
     // first, so multi-window same-class apps (two browser windows, three
@@ -490,16 +464,23 @@ export function buildRestoreScript(profile, existing) {
         var eUsed = []
         for (var eu = 0; eu < existing.length; eu++) eUsed[eu] = false
 
-        // Bind existing window `e` to profile window index `pIdx`. A browser
-        // window whose snapshot carried tabs is closed here and respawned
-        // fresh in Phase 3 (so `matched` is left false); anything else is
-        // moved into place.
+        // Bind existing window `e` to profile window index `pIdx`: moved into
+        // place like any other matched window.
+        //
+        // A browser window is deliberately treated no differently here - an
+        // *already-running* browser's tabs are left alone. Closing and
+        // relaunching it with the captured tab list to force an exact match
+        // was tried (and iterated on repeatedly: cmdline pollution, pinned
+        // tabs, Chrome's own crash-restore, a close/relaunch race) and kept
+        // finding new ways to duplicate tabs, because it depends on a
+        // multi-process browser's shutdown and IPC-driven tab-adding
+        // finishing in a way this script cannot fully observe or control.
+        // Tabs are only ever launched explicitly in Phase 3, for a browser
+        // window that is not currently running - the reboot / cold-start
+        // case this plugin exists for, where there is nothing already open
+        // to duplicate against.
         var claim = function (e, pIdx) {
             var target = profile.windows[pIdx]
-            if (target.browser && target.tabs && target.tabs.length > 0) {
-                browserCloseTargets.push({ addr: e.address, pid: e.pid })
-                return
-            }
             matched[pIdx] = true
             matchedAddrs.push(e.address)
             var eWs = e.workspace ? String(e.workspace.name) : ""
@@ -591,19 +572,6 @@ export function buildRestoreScript(profile, existing) {
         lines.push("hyprctl dispatch \"hl.dsp.window.resize({x=" + fw + ", y=" + fh + ", window='address:" + fl.addr + "'})\" 2>>\"$LOGFILE\" || true")
     }
 
-    // Phase 2c: close existing browser windows whose snapshot carried tabs,
-    // and wait for each one's process to actually exit, so Phase 3 relaunches
-    // a clean process instead of adding tabs onto one that never closed.
-    if (browserCloseTargets.length > 0) {
-        for (var bc = 0; bc < browserCloseTargets.length; bc++) {
-            var bct = browserCloseTargets[bc]
-            lines.push('echo "[close-browser] addr=' + bct.addr + '" >> "$LOGFILE"')
-            lines.push("hyprctl dispatch \"hl.dsp.window.close({window='address:" + bct.addr + "'})\" 2>>\"$LOGFILE\" || true")
-            var waitLines = waitForPidExitLines(bct.pid)
-            for (var wl = 0; wl < waitLines.length; wl++) lines.push(waitLines[wl])
-        }
-        lines.push("sleep 0.3")
-    }
 
     // Phase 3: spawn missing windows onto their target workspace
     // (focus-then-launch).

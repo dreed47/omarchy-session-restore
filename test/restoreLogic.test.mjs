@@ -7,7 +7,6 @@ import {
     sanitizeLaunchCommand,
     browserRelaunchBase,
     resetChromiumCrashFlagLines,
-    waitForPidExitLines,
     safeWorkspace,
     safeClass,
     numOr,
@@ -170,20 +169,6 @@ test("resetChromiumCrashFlagLines is a no-op for firefox and missing profiles", 
     assert.deepEqual(resetChromiumCrashFlagLines("", "google-chrome"), [])
 })
 
-// --- waitForPidExitLines ---
-
-test("waitForPidExitLines polls kill -0 on the given pid", () => {
-    const script = waitForPidExitLines(12345).join("\n")
-    assert.match(script, /kill -0 12345/)
-    assert.match(script, /BCWAIT -lt 150/)
-})
-
-test("waitForPidExitLines is a no-op without a usable pid", () => {
-    assert.deepEqual(waitForPidExitLines(0), [])
-    assert.deepEqual(waitForPidExitLines(null), [])
-    assert.deepEqual(waitForPidExitLines(undefined), [])
-    assert.deepEqual(waitForPidExitLines(-4), [])
-})
 
 // --- safeWorkspace ---
 
