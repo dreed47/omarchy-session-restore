@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Browser tab restore was opening far more tabs than it should, compounding
+  on every restore.** Two causes, both in browser-tab handling:
+  1. Once a browser window was ever restored via `exec browser url1 url2 ...`,
+     that argv stayed in the process's `/proc/<pid>/cmdline` for as long as the
+     browser kept running - `exec` replaces the process image. The *next*
+     capture read that polluted cmdline back as the window's `command`, and
+     restore used it as the launch base and appended the newly-captured tabs
+     on top, so the old tab list was replayed and grew on every single
+     restore. Fixed with `browserRelaunchBase`: for any browser window, the
+     relaunch command now keeps only the executable and flag-style arguments
+     (e.g. `--profile-directory=Default`) from the captured cmdline and
+     discards every bare positional argument (i.e. URLs) - the tab list always
+     comes fresh from the capture, never from history. Self-healing: this
+     fixes restore for profiles saved before the fix too, since it operates at
+     restore time.
+  2. Pinned tabs were captured and restored like any other tab, even though
+     Chrome/Firefox recreate pinned tabs on their own the next time a window
+     opens - so restoring them too duplicated every pinned tab. Fixed in
+     `scripts/capture_tabs.py`: Firefox tabs marked `pinned` in the session
+     store are skipped, and Chromium/Chrome/Brave/Vivaldi pinned URLs (read
+     from the profile's `Preferences` `pinned_tabs` list) are excluded from
+     capture. This one only fixes *future* saves - profiles saved before this
+     fix still have pinned URLs baked into their `tabs` array until re-saved.
+  3. `buildTabUrls` now also collapses exact-duplicate URLs within one
+     snapshot, so a tab is never listed twice regardless of cause.
+
 ## [2.0.0] - 2026-09-03
 
 Forked from [Workspace Restorer](https://github.com/Davedes83/workspace-restorer)

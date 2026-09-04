@@ -260,6 +260,29 @@ test("buildRestoreScript: exact title match wins over array order", () => {
     assert.match(script, /spawn-0\.sh/) // term-A (ws2) still needs spawning
 })
 
+test("buildRestoreScript never replays a browser's polluted historical cmdline as tabs", () => {
+    // Once this tool restores a browser via `exec chrome url1 url2`, that argv
+    // is baked into /proc/<pid>/cmdline for as long as the process lives, so a
+    // *later* capture's `command` field carries every URL from that earlier
+    // restore. If the spawn command used that as its base, the old URLs would
+    // be replayed and grow on every restore.
+    const polluted = {
+        windows: [{
+            class: "google-chrome", title: "x", workspace: "1", monitor: "DP-1",
+            command: "/opt/google/chrome/chrome https://old-1.example/ https://old-2.example/ https://old-3.example/",
+            position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+            browser: "chromium",
+            tabs: [{ url: "https://new-1.example/" }, { url: "https://new-2.example/" }],
+        }],
+    }
+    const { script } = buildRestoreScript(polluted, [])
+    assert.match(script, /new-1\.example/)
+    assert.match(script, /new-2\.example/)
+    assert.doesNotMatch(script, /old-1\.example/)
+    assert.doesNotMatch(script, /old-2\.example/)
+    assert.doesNotMatch(script, /old-3\.example/)
+})
+
 test("buildRestoreScript skips windows with unsafe metadata", () => {
     const bad = { windows: [{ class: "a b; rm", title: "x", workspace: "1", monitor: "DP-1", command: "x", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0 }] }
     const { script, count } = buildRestoreScript(bad, [])

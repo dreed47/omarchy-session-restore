@@ -5,6 +5,7 @@ import {
     validProfilePath,
     shellArg,
     sanitizeLaunchCommand,
+    browserRelaunchBase,
     safeWorkspace,
     safeClass,
     numOr,
@@ -124,6 +125,31 @@ test("sanitizeLaunchCommand falls back to class when empty", () => {
 test("sanitizeLaunchCommand returns empty on no input", () => {
     assert.equal(sanitizeLaunchCommand("", ""), "")
     assert.equal(sanitizeLaunchCommand("   ", "   "), "")
+})
+
+// --- browserRelaunchBase ---
+
+test("browserRelaunchBase keeps the executable and drops a polluted URL tail", () => {
+    // A window that this tool previously restored via `exec chrome url1 url2`
+    // has that whole argv baked into /proc/<pid>/cmdline forever.
+    const polluted = "/opt/google/chrome/chrome https://a.example/ https://b.example/ https://c.example/"
+    assert.equal(browserRelaunchBase(polluted, "google-chrome"), "'/opt/google/chrome/chrome'")
+})
+
+test("browserRelaunchBase keeps flag-style arguments", () => {
+    assert.equal(
+        browserRelaunchBase("/usr/bin/firefox --profile /home/user/.mozilla/x --new-instance https://old.example/", "firefox"),
+        "'/usr/bin/firefox' '--profile' '--new-instance'"
+    )
+})
+
+test("browserRelaunchBase falls back to the class name when raw is empty", () => {
+    assert.equal(browserRelaunchBase("", "Firefox"), "'firefox'")
+    assert.equal(browserRelaunchBase(null, "Google-chrome"), "'google-chrome'")
+})
+
+test("browserRelaunchBase rejects an unsafe executable token", () => {
+    assert.equal(browserRelaunchBase("$(evil) https://x.example/", "firefox"), "")
 })
 
 // --- safeWorkspace ---
@@ -280,6 +306,15 @@ test("buildTabUrls returns empty for no usable tabs", () => {
     assert.equal(buildTabUrls(null), "")
     assert.equal(buildTabUrls([{ url: "about:newtab" }]), "")
     assert.equal(buildTabUrls([{ url: "https://x.com/;ls" }]), "")
+})
+
+test("buildTabUrls collapses repeated URLs so a tab is never opened twice", () => {
+    const tabs = [
+        { url: "https://github.com/" },
+        { url: "https://news.ycombinator.com/" },
+        { url: "https://github.com/" }, // duplicate
+    ]
+    assert.equal(buildTabUrls(tabs), "'https://github.com/' 'https://news.ycombinator.com/'")
 })
 
 // --- buildBrowserLaunchCommand ---

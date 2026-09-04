@@ -185,6 +185,13 @@ def _firefox_tabs_from_session(data):
     seen = set()
     for win in data.get("windows", []):
         for tab in win.get("tabs", []):
+            # Pinned tabs are a per-window Firefox setting, not part of "what
+            # you had open" the way regular tabs are - Firefox recreates them
+            # on its own the next time this window/profile opens. Restoring
+            # them too would duplicate every pinned tab on top of the ones
+            # Firefox already brings back.
+            if tab.get("pinned"):
+                continue
             entries = tab.get("entries", [])
             idx = tab.get("index", 1) - 1
             entry = entries[idx] if 0 <= idx < len(entries) else None
@@ -239,29 +246,67 @@ def capture_firefox(profile_dir):
     return {"ok": False, "error": "no firefox session backup found"}
 
 
+def _chromium_pinned_urls(user_data_dir):
+    """Best-effort set of this profile's pinned-tab URLs, read from its
+    `Preferences` file (`pinned_tabs`, a list of URL strings or {"url": ...}
+    objects depending on Chrome version).
+
+    Chrome/Chromium recreate pinned tabs on their own the next time a window
+    for this profile opens - that is what "pinned" means. If restore also
+    passes them as explicit tabs to reopen, every pinned tab gets duplicated
+    alongside the one the browser already brought back. Read-only; a missing,
+    unreadable, or oddly-shaped file just means no exclusions, never an error.
+    """
+    for rel in (os.path.join("Default", "Preferences"), "Preferences"):
+        path = os.path.join(user_data_dir, rel)
+        try:
+            if os.path.getsize(path) > _PREFERENCES_MAX_BYTES:
+                continue
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                prefs = json.load(f)
+        except Exception:  # noqa: BLE001
+            continue
+        pinned = prefs.get("pinned_tabs")
+        if not isinstance(pinned, list):
+            continue
+        urls = set()
+        for entry in pinned:
+            if isinstance(entry, str):
+                urls.add(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("url"), str):
+                urls.add(entry["url"])
+        if urls:
+            return urls
+    return set()
+
+
 def capture_chromium(user_data_dir):
+    pinned = _chromium_pinned_urls(user_data_dir)
+
     # Primary: an already-open DevTools debug port (browser launched with
     # --remote-debugging-port). Only reads; never starts a browser.
     tabs = _capture_chromium_cdp(user_data_dir)
     if tabs is not None and tabs:
-        return {"ok": True, "tabs": tabs}
+        return {"ok": True, "tabs": [t for t in tabs if t.get("url") not in pinned]}
     # Fallback: decode Vivaldi/Chromium "Sessions/Tabs_*" SNSS session files
     # for the current open tabs. Works for normal browser launches that were
     # not started with a debug port.
     tabs = _capture_vivaldi_snss(user_data_dir)
     if tabs is not None and tabs:
-        return {"ok": True, "tabs": tabs}
+        return {"ok": True, "tabs": [t for t in tabs if t.get("url") not in pinned]}
     if tabs is None:
         return {"ok": False, "error": "no DevToolsActivePort (browser not started with --remote-debugging-port)"}
     return {"ok": False, "error": "no current tabs found in sessions files"}
 
 
 # Ceilings applied to untrusted local files / responses in capture_tabs.py.
-# The DevTools port file and browser session / recovery files are derived from
-# a window's own /proc command line (any local process can present a matching
-# window), so they are treated as attacker-influenced input and bounded.
+# The DevTools port file and browser session / recovery / preferences files
+# are derived from a window's own /proc command line (any local process can
+# present a matching window), so they are treated as attacker-influenced
+# input and bounded.
 _CDP_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
 _DEVTOOLS_PORT_FILE_MAX_BYTES = 4096
+_PREFERENCES_MAX_BYTES = 16 * 1024 * 1024
 # Bound on a single captured Firefox session file. The compressed mozLz40 file
 # is stat-bounded before any read, and the raw-LZ4 decompressor is given an
 # explicit uncompressed_size ceiling so a crafted tiny file can never trigger

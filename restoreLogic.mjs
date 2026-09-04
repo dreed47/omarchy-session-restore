@@ -33,6 +33,33 @@ export function sanitizeLaunchCommand(raw, fallbackClass) {
     return out.join(" ")
 }
 
+// Executable + flags only from a captured browser cmdline, discarding every
+// bare positional argument (typically URLs).
+//
+// Once this tool has ever restored a browser window with `exec browser url1
+// url2 ...`, that argv is baked into the running process's /proc/<pid>/cmdline
+// permanently - `exec` replaces the process image, so the URLs stay in its
+// cmdline for as long as the browser keeps running, often far longer than the
+// tabs themselves stay open. If a later restore used that captured cmdline as
+// the base and appended the newly-captured tabs, the old URL list would be
+// replayed and grow on every single restore, compounding duplicate tabs
+// indefinitely. Flag-style tokens (e.g. --profile-directory=Default) are kept
+// since they can select the right browser profile; only bare positionals are
+// dropped, because the caller is always about to supply the exact tab list to
+// reopen. Returns "" if the executable token is unsafe, mirroring
+// sanitizeLaunchCommand.
+export function browserRelaunchBase(raw, fallbackClass) {
+    var src = raw || (fallbackClass ? fallbackClass.toLowerCase() : "")
+    var tokens = String(src).split(/\s+/).filter(function (t) { return t.length > 0 })
+    if (tokens.length === 0) return ""
+    if (!/^(\.?\/)?[A-Za-z0-9_][A-Za-z0-9_.+/-]*$/.test(tokens[0])) return ""
+    var out = [shellArg(tokens[0])]
+    for (var i = 1; i < tokens.length; i++) {
+        if (tokens[i].charAt(0) === "-") out.push(shellArg(tokens[i]))
+    }
+    return out.join(" ")
+}
+
 export function safeWorkspace(ws) {
     if (typeof ws !== "string") return null
     if (!/^[_a-z0-9]{1,32}$/i.test(ws)) return null
@@ -125,11 +152,13 @@ export function safeUrl(url) {
 }
 
 // Build a list of shell-quoted, validated tab URLs (excluding new-tab/blank
-// pages that we don't want to reopen) from a snapshot window's tabs array.
-// Returns a string like "'url1' 'url2'", or "" if there are no usable tabs.
+// pages that we don't want to reopen, and collapsing repeats of the same URL
+// within the snapshot) from a snapshot window's tabs array. Returns a string
+// like "'url1' 'url2'", or "" if there are no usable tabs.
 export function buildTabUrls(tabs) {
     if (!Array.isArray(tabs)) return ""
     var out = []
+    var seen = {}
     for (var i = 0; i < tabs.length; i++) {
         var tab = tabs[i]
         if (!tab || typeof tab.url !== "string") continue
@@ -137,6 +166,8 @@ export function buildTabUrls(tabs) {
         if (url === null) continue
         var lower = url.toLowerCase()
         if (lower === "about:newtab" || lower === "about:blank" || lower === "") continue
+        if (Object.prototype.hasOwnProperty.call(seen, url)) continue
+        seen[url] = true
         out.push(shellArg(url))
     }
     return out.join(" ")
@@ -527,11 +558,16 @@ export function buildRestoreScript(profile, existing) {
             lines.push('echo "[launch] skipped unsafe metadata" >> "$LOGFILE"')
             continue
         }
-        var cmd = sanitizeLaunchCommand(w.command, cls)
         var cmds
-        if (w.browser && (w.tabs && w.tabs.length > 0)) {
-            cmds = buildBrowserLaunchCommands(cmd, cls, w.tabs)
+        if (w.browser) {
+            // Never trust bare positional args (i.e. URLs) from a browser's
+            // captured cmdline as launch arguments - see browserRelaunchBase.
+            var browserBase = browserRelaunchBase(w.command, cls)
+            cmds = (w.tabs && w.tabs.length > 0)
+                ? buildBrowserLaunchCommands(browserBase, cls, w.tabs)
+                : (browserBase.length > 0 ? [browserBase] : [])
         } else {
+            var cmd = sanitizeLaunchCommand(w.command, cls)
             cmds = cmd.length > 0 ? [cmd] : []
         }
         if (cmds.length === 0) {
