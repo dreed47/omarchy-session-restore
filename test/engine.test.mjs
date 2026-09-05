@@ -208,6 +208,19 @@ test("buildRestoreScript spawns windows that are not already open", () => {
     assert.equal(count, 2)
 })
 
+test("buildRestoreScript safety pass matches *.desktop classes after jq strip", () => {
+    const profile = {
+        windows: [{
+            class: "org.telegram.desktop", title: "Omarchy Talk", workspace: "1", monitor: "eDP-1",
+            command: "/usr/bin/Telegram", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+            browser: null, tabs: null,
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.match(script, /gsub\("\\\\.desktop\$"; ""\)\) == "org\.telegram"/)
+    assert.doesNotMatch(script, /== "org\.telegram\.desktop"/)
+})
+
 test("buildRestoreScript moves an already-open window instead of spawning it", () => {
     const existing = [
         { class: "code", title: "Editor", address: "0xdead", workspace: { name: "9" }, floating: false, fullscreen: 0 },
