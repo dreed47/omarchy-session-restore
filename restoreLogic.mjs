@@ -683,7 +683,8 @@ export function buildRestoreScript(profile, existing) {
         safety.push('MOVED_ADDRS=""')
         for (var s = 0; s < spawnTargets.length; s++) {
             var t = spawnTargets[s]
-            var jqFilter = '.[] | select((.class | ascii_downcase | gsub("\\\\.desktop$"; "")) == "' + t.cls + '") | [.address, .workspace.name] | @tsv'
+            var clsNorm = t.cls.toLowerCase().replace(/\.desktop$/i, "")
+            var jqFilter = '.[] | select((.class | ascii_downcase | gsub("\\\\.desktop$"; "")) == "' + clsNorm + '") | [.address, .workspace.name] | @tsv'
             safety.push("ATTEMPT=0")
             safety.push("HANDLED=0")
             safety.push("while [ $ATTEMPT -lt 30 ] && [ $HANDLED -eq 0 ]; do")
