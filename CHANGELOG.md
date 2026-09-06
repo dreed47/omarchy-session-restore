@@ -1,14 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [2.2.0] - 2026-09-06
 
 ### Fixed
 
-- **Restored OpenCode/Ghostty windows missed project `mise [env]` (e.g. `XAI_API_KEY`), so OpenCode failed with `unauthenticated:bad-credentials`.** Restore now `cd`s to the captured cwd and evals `mise env -s bash` before launching, but only for non-browser windows.
+- **Apps whose class ends in `.desktop` (e.g. Telegram, `org.telegram.desktop`) were left on the wrong workspace after a late map.** The Phase 3b safety pass strips `.desktop` and lowercases the *live* window class before comparing, but compared it against the unstripped saved class, so the match never fired. The saved class is now normalized the same way. (#1)
+- **Restored OpenCode/Ghostty windows missed project `mise [env]` (e.g. `XAI_API_KEY`), so OpenCode failed with `unauthenticated:bad-credentials`.** Restore now `cd`s to the captured cwd and evals `mise env -s bash` before launching, but only for non-browser windows. (#2)
 
 ### Changed
 
-- **Restore strips `--gtk-single-instance` / `--gtk-single-instance=true` from captured terminal commands.** Ghostty otherwise forwards the launch into an already-running process (wrong cwd, so mise env never loads). Each saved terminal window now comes back as its own process. This applies to every terminal restore, not only OpenCode.
+- **Restore strips `--gtk-single-instance` / `--gtk-single-instance=true` from captured terminal commands.** Ghostty otherwise forwards the launch into an already-running process (wrong cwd, so mise env never loads). Each saved terminal window now comes back as its own process. This applies to every terminal restore, not only OpenCode. (#2)
 
 ## [2.1.0] - 2026-09-04
 
