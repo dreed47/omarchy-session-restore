@@ -5,6 +5,7 @@ import {
     validProfilePath,
     shellArg,
     sanitizeLaunchCommand,
+    sanitizeCwd,
     browserRelaunchBase,
     resetChromiumCrashFlagLines,
     safeWorkspace,
@@ -126,6 +127,20 @@ test("sanitizeLaunchCommand falls back to class when empty", () => {
 test("sanitizeLaunchCommand returns empty on no input", () => {
     assert.equal(sanitizeLaunchCommand("", ""), "")
     assert.equal(sanitizeLaunchCommand("   ", "   "), "")
+})
+
+test("sanitizeLaunchCommand drops gtk-single-instance so restore is a new process", () => {
+    assert.equal(
+        sanitizeLaunchCommand("/usr/bin/ghostty --gtk-single-instance=true --class=org.omarchy.agent -e opencode --auto"),
+        "'/usr/bin/ghostty' '--class=org.omarchy.agent' '-e' 'opencode' '--auto'"
+    )
+})
+
+test("sanitizeCwd accepts absolute paths and rejects traversal", () => {
+    assert.equal(sanitizeCwd("/home/alex/Work"), "/home/alex/Work")
+    assert.equal(sanitizeCwd("Work"), null)
+    assert.equal(sanitizeCwd("/home/../etc"), null)
+    assert.equal(sanitizeCwd(""), null)
 })
 
 // --- browserRelaunchBase ---

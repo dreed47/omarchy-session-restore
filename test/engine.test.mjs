@@ -210,6 +210,38 @@ test("buildRestoreScript pins workspaces to monitors before moving anything", ()
     assert.match(script, /hl\.dsp\.workspace\.move\(\{workspace='3', monitor='DP-1'\}\)/)
 })
 
+test("buildRestoreScript cds to the captured cwd before launching", () => {
+    const profile = {
+        windows: [{
+            class: "org.omarchy.agent", title: "OC", workspace: "1", monitor: "eDP-1",
+            command: "/usr/bin/ghostty --gtk-single-instance=true --class=org.omarchy.agent -e opencode --auto",
+            cwd: "/home/alex/Work",
+            position: [0, 0], size: [1, 1], floating: false, fullscreen: 0, browser: null, tabs: null,
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.match(script, /cd '\\''\/home\/alex\/Work'\\'' 2>\/dev\/null \|\| true/)
+    assert.match(script, /command -v mise/)
+    assert.match(script, /mise env -s bash/)
+    assert.match(script, /'\/usr\/bin\/ghostty'\\'' '\\''--class=org\.omarchy\.agent'\\'' '\\''-e'\\'' '\\''opencode'\\'' '\\''--auto'/)
+    assert.doesNotMatch(script, /gtk-single-instance/)
+})
+
+test("buildRestoreScript does not cd or eval mise env for browser windows", () => {
+    const profile = {
+        windows: [{
+            class: "google-chrome", title: "Chrome", workspace: "1", monitor: "eDP-1",
+            command: "/usr/bin/google-chrome-stable",
+            cwd: "/home/alex/Work",
+            position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+            browser: "chrome", tabs: ["https://example.com"], browserProfile: "Default",
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.doesNotMatch(script, /cd '\\''\/home\/alex\/Work'/)
+    assert.doesNotMatch(script, /mise env -s bash/)
+})
+
 test("buildRestoreScript spawns windows that are not already open", () => {
     const { script, count } = buildRestoreScript(PROFILE, [])
     assert.match(script, /hl\.dsp\.focus\(\{workspace='2'\}\)/)

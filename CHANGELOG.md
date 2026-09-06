@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Restored OpenCode/Ghostty windows missed project `mise [env]` (e.g. `XAI_API_KEY`), so OpenCode failed with `unauthenticated:bad-credentials`.** Restore now `cd`s to the captured cwd and evals `mise env -s bash` before launching, but only for non-browser windows.
+
+### Changed
+
+- **Restore strips `--gtk-single-instance` / `--gtk-single-instance=true` from captured terminal commands.** Ghostty otherwise forwards the launch into an already-running process (wrong cwd, so mise env never loads). Each saved terminal window now comes back as its own process. This applies to every terminal restore, not only OpenCode.
+
 ## [2.1.0] - 2026-09-04
 
 Browser tab capture/restore is now **off by default**, behind a new toggle.

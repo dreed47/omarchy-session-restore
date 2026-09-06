@@ -23,13 +23,32 @@ export function shellArg(s) {
     return "'" + String(s).replace(/'/g, "'\\''") + "'"
 }
 
+export function sanitizeCwd(raw) {
+    if (typeof raw !== "string") return null
+    var n = raw.trim()
+    if (n.length === 0 || n.length > 4096) return null
+    if (n.charAt(0) !== "/") return null
+    if (n.indexOf("\0") >= 0 || /[\x00-\x1f]/.test(n)) return null
+    var parts = n.split("/")
+    for (var i = 0; i < parts.length; i++) {
+        if (parts[i] === "..") return null
+    }
+    return n
+}
+
 export function sanitizeLaunchCommand(raw, fallbackClass) {
     var src = raw || (fallbackClass ? fallbackClass.toLowerCase() : "")
     var tokens = String(src).split(/\s+/).filter(function (t) { return t.length > 0 })
     if (tokens.length === 0) return ""
     if (!/^(\.?\/)?[A-Za-z0-9_][A-Za-z0-9_.+/-]*$/.test(tokens[0])) return ""
     var out = []
-    for (var i = 0; i < tokens.length; i++) out.push(shellArg(tokens[i]))
+    for (var i = 0; i < tokens.length; i++) {
+        // A captured gtk-single-instance terminal is forwarded to an already
+        // running ghostty/gtk process (wrong cwd, so project env like mise
+        // [env] never loads). Drop it so restore starts a real new process.
+        if (/^--gtk-single-instance(=true)?$/.test(tokens[i])) continue
+        out.push(shellArg(tokens[i]))
+    }
     return out.join(" ")
 }
 
@@ -641,6 +660,15 @@ export function buildRestoreScript(profile, existing) {
             if (k < cmds.length - 1) steps.push("sleep 0.4")
         }
         var launchline = steps.length > 0 ? steps.join("\n") : "exit 1"
+        var cwd = !w.browser ? sanitizeCwd(w.cwd) : null
+        if (cwd) {
+            // cwd alone is not enough: ghostty -e runs the binary without a
+            // shell, so mise [env] (project API keys) never loads. Eval after
+            // cd so the exec'd process inherits directory-scoped env.
+            launchline = "cd " + shellArg(cwd) + " 2>/dev/null || true\n" +
+                'command -v mise >/dev/null 2>&1 && eval "$(mise env -s bash 2>/dev/null)" || true\n' +
+                launchline
+        }
         // Only touch the browser's own crash/session state when actually
         // relaunching an explicit tab list on top of it - with no captured
         // tabs (tab restore off, or none captured), the launch above is a
