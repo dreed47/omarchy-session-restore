@@ -79,48 +79,87 @@ export function browserRelaunchBase(raw, fallbackClass) {
     return out.join(" ")
 }
 
-// Bash lines that mark a Chromium-family profile's last exit as clean, right
-// before it gets relaunched.
-//
-// Chrome/Chromium auto-restore the previous session on launch whenever
-// `profile.exit_type` in Preferences is not "Normal" - regardless of the
-// restore_on_startup setting or the URLs passed on the command line - and
-// merge that restored session in with whatever tabs we explicitly asked for,
-// duplicating every one of them. The profile ends up in that state after any
-// exit that was not Chrome's own clean quit: most commonly an unclean
-// shutdown (a reboot where Chrome did not get to exit before the machine
-// went down), which is exactly when this plugin's login restore matters
-// most. Best-effort: a missing/unreadable Preferences file, or `jq` failing,
-// is silently skipped rather than blocking the restore.
-//
-// NOTE: on current Chrome (verified on 152.x) this alone is not sufficient -
-// see clearChromiumSessionSnapshotLines below, which is the fix that
-// actually stops the restore. Kept anyway as cheap defense-in-depth for
-// older/other Chromium builds that do still key off this flag.
-export function resetChromiumCrashFlagLines(browserProfile, cls, logfileVar) {
-    if (!browserProfile || browserTypeForClass(cls) !== "chromium") return []
-    var base = String(browserProfile).replace(/\/$/, "")
-    var prefs = shellArg(base + "/Default/Preferences")
-    var tmp = shellArg(base + "/Default/Preferences.sr-tmp")
-    var log = logfileVar || "$LOGFILE"
-    return [
-        "if [ -f " + prefs + " ]; then",
-        "  jq '.profile.exit_type = \"Normal\"' " + prefs + ' > ' + tmp + ' 2>>"' + log + '" && mv ' + tmp + " " + prefs + " || rm -f " + tmp,
-        "fi",
-    ]
+// Omarchy web apps (and Chromium-family --app= windows in general) share the
+// browser process, so /proc/<pid>/cmdline is just `chrome` / `brave` / etc.
+// The window class is the durable identity:
+//   <product>-<host>__-<Profile>     SSB / omarchy-launch-webapp
+//   <product>-<32-char-id>-<Profile> installed PWA (--app-id)
+// product is chrome, chromium, brave, msedge, vivaldi, opera, helium, ...
+export function parseWebAppClass(cls) {
+    if (typeof cls !== "string") return null
+    var product = "(chrome|chromium|brave|brave-browser|msedge|microsoft-edge|vivaldi|vivaldi-stable|opera|helium|helium-browser)"
+    var m = new RegExp("^" + product + "-([a-z0-9-]+(?:\\.[a-z0-9-]+)+)__-([A-Za-z0-9]{1,64})$", "i").exec(cls)
+    if (m) {
+        var host = m[2]
+        if (!/^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$/.test(host)) return null
+        var url = "https://" + host + "/"
+        if (safeUrl(url) === null) return null
+        return { kind: "url", product: m[1].toLowerCase(), host: host.toLowerCase(), profile: m[3], url: url }
+    }
+    m = new RegExp("^" + product + "-([a-z0-9]{32})-([A-Za-z0-9]{1,64})$", "i").exec(cls)
+    if (m) {
+        return { kind: "appid", product: m[1].toLowerCase(), appId: m[2], profile: m[3] }
+    }
+    return null
 }
 
-// The actual fix for Chrome auto-restoring old tabs on top of the ones this
-// plugin explicitly launches: current Chrome (verified on 152.x) restores
-// from its own Sessions/Session_*+Tabs_* snapshot files after an abrupt
-// exit - a reboot where Chrome was killed rather than quit - regardless of
-// `profile.exit_type` (see resetChromiumCrashFlagLines; confirmed live that
-// resetting it to "Normal" did not stop the restore). Since this plugin
-// always passes an explicit, authoritative tab list on relaunch, Chrome's
-// own snapshot is never wanted - deleting it before launch removes the data
-// the restore would otherwise be built from. Verified live: 3 consecutive
-// relaunches with a forced-unclean profile, exactly the captured tab count
-// each time, no extras. Best-effort: a missing Sessions dir is a no-op.
+export function isWebAppClass(cls) {
+    return parseWebAppClass(cls) !== null
+}
+
+// Command that actually creates the web-app window. URL-style apps go through
+// omarchy-launch-webapp (uwsm-app + the user's default Chromium-family browser
+// + --app=URL) — the same path the desktop launcher uses. Installed PWAs have
+// no URL in the class; the caller appends --app-id= to the captured binary.
+export function webAppLaunchCommand(cls) {
+    var p = parseWebAppClass(cls)
+    if (!p || p.kind !== "url") return null
+    return "omarchy-launch-webapp " + p.url
+}
+
+// Class identity for matching: lowercase, strip a Wayland instance suffix
+// (`org.telegram.desktop._<hex>` → `org.telegram.desktop`) then a trailing
+// `.desktop` so org.telegram.desktop and org.telegram compare equal.
+export function normClass(cls) {
+    if (typeof cls !== "string" || cls.length === 0) return ""
+    return cls.toLowerCase()
+        .replace(/\._[0-9a-f]{8,}$/i, "")
+        .replace(/\.desktop$/i, "")
+}
+
+function classKeys(w) {
+    var keys = []
+    var seen = {}
+    function add(c) {
+        var n = normClass(c)
+        if (!n || seen[n]) return
+        seen[n] = true
+        keys.push(n)
+    }
+    add(w && w.class)
+    add(w && w.initialClass)
+    return keys
+}
+
+// True when two window records share a class or initialClass (after normClass).
+export function classesMatch(a, b) {
+    var ka = classKeys(a)
+    var kb = classKeys(b)
+    for (var i = 0; i < ka.length; i++) {
+        for (var j = 0; j < kb.length; j++) {
+            if (ka[i] === kb[j]) return true
+        }
+    }
+    return false
+}
+
+// Chrome auto-restores old tabs from Sessions/Session_* + Tabs_* after an
+// abrupt exit (reboot where Chrome was killed rather than quit), and merges
+// that with any URLs this plugin passes on the command line. Resetting
+// profile.exit_type in Preferences does not stop it (verified on Chrome 152)
+// and was a write into another app's config, so it is gone. Deleting the
+// snapshot files before launch is the fix that actually works. Best-effort:
+// a missing Sessions dir is a no-op.
 export function clearChromiumSessionSnapshotLines(browserProfile, cls) {
     if (!browserProfile || browserTypeForClass(cls) !== "chromium") return []
     var base = String(browserProfile).replace(/\/$/, "")
@@ -187,6 +226,84 @@ export function buildMonitorMap(monitors) {
         map[monitors[i].id] = monitors[i].name
     }
     return map
+}
+
+function isLiveMonitor(m) {
+    if (!m || m.disabled) return false
+    return typeof m.name === "string" && /^[A-Za-z0-9-]{1,64}$/.test(m.name)
+}
+
+export function liveMonitorNames(monitors) {
+    var names = []
+    if (!monitors) return names
+    for (var i = 0; i < monitors.length; i++) {
+        if (isLiveMonitor(monitors[i])) names.push(monitors[i].name)
+    }
+    return names
+}
+
+// Monitor to pin onto when a saved output is gone (undocked laptop). Focused
+// first, then the first enabled output.
+export function pickFallbackMonitor(monitors) {
+    if (!monitors) return null
+    var first = null
+    for (var i = 0; i < monitors.length; i++) {
+        var m = monitors[i]
+        if (!isLiveMonitor(m)) continue
+        if (m.focused) return m.name
+        if (first === null) first = m.name
+    }
+    return first
+}
+
+// Keep the saved name when that output is still connected; otherwise the
+// fallback. With no live list, return the saved name unchanged (tests / dry
+// runs that do not pass monitors).
+export function resolveMonitorName(saved, liveMonitors) {
+    if (!liveMonitors || liveMonitors.length === 0) {
+        return (typeof saved === "string" && /^[A-Za-z0-9-]{1,64}$/.test(saved)) ? saved : null
+    }
+    var names = liveMonitorNames(liveMonitors)
+    if (typeof saved === "string" && names.indexOf(saved) >= 0) return saved
+    return pickFallbackMonitor(liveMonitors)
+}
+
+// Shell chrome that should never be captured or restored: the Omarchy bar,
+// Hyprland special/scratchpad workspaces, portals, polkit, notification daemons.
+export function isInfrastructureWindow(c) {
+    if (!c) return true
+    if (c.class === "org.quickshell") return true
+    var ws = c.workspace && (typeof c.workspace === "object" ? c.workspace.name : c.workspace)
+    if (typeof ws === "string" && /^special(:|$)/.test(ws)) return true
+    var blob = String(c.class || "") + " " + String(c.initialClass || "")
+    if (/portal/i.test(blob)) return true
+    if (/polkit/i.test(blob)) return true
+    if (/notif/i.test(blob)) return true
+    if (/^(mako|dunst|swaync)$/i.test(String(c.class || ""))) return true
+    return false
+}
+
+// Cardinality / size bounds applied to any profile before it is used to
+// generate restore commands. A profile is command-launch input, so window
+// and tab counts are capped even when it was authored or edited by hand.
+export const MAX_WINDOWS = 512
+export const MAX_TABS_PER_WINDOW = 300
+export const MAX_PROFILES = 256
+export const MAX_PROFILE_BYTES = 8 * 1024 * 1024
+
+// Validate a parsed profile object's window/tab cardinality. Returns the
+// profile unchanged, or null if it is malformed or exceeds the bounds.
+export function enforceProfileCardinality(profile) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) return null
+    if (!Array.isArray(profile.windows)) return null
+    if (profile.windows.length > MAX_WINDOWS) return null
+    for (var i = 0; i < profile.windows.length; i++) {
+        var w = profile.windows[i]
+        if (!w || typeof w !== "object" || Array.isArray(w)) return null
+        if (!Array.isArray(w.tabs)) continue
+        if (w.tabs.length > MAX_TABS_PER_WINDOW) return null
+    }
+    return profile
 }
 
 // Class-name sets for browser detection. Matches Firefox-family and
@@ -373,11 +490,7 @@ export function assembleWindows(opts) {
 
     for (var i = 0; i < clients.length; i++) {
         var c = clients[i]
-        // The Omarchy shell itself (bar, panels, popups) is quickshell-based
-        // infrastructure this plugin runs inside of, always-on and never
-        // something a session should relaunch - restoring it would spawn a
-        // redundant second shell instance. Skip it rather than capture it.
-        if (c.class === "org.quickshell") continue
+        if (isInfrastructureWindow(c)) continue
         var info = procInfo[String(c.pid)]
         var rawCmd = (info && info.cmdline) ? info.cmdline.trim() : null
         var cwd = (info && info.cwd) ? info.cwd.trim() : null
@@ -390,11 +503,17 @@ export function assembleWindows(opts) {
             pidCmd[c.pid] = cmd
         }
 
-        var btype = browserTypeForClass(c.class)
+        // Web-app windows share the browser PID, so the cached cmdline is the
+        // browser binary with no --app. Rebuild the real launcher from class
+        // and do not treat them as tab-restore browser windows.
+        var webCmd = webAppLaunchCommand(c.class)
+        var btype = webCmd ? null : browserTypeForClass(c.class)
         var bprofile = btype ? resolveBrowserProfile(btype, rawCmd, home) : null
+        if (webCmd) cmd = webCmd
 
         windows.push({
             "class": c.class,
+            "initialClass": c.initialClass || c.class,
             "title": c.title,
             "pid": c.pid,
             "address": c.address,
@@ -425,6 +544,7 @@ export function tabCaptureInvocations(windows, scriptPath) {
     for (var i = 0; i < windows.length; i++) {
         var w = windows[i]
         if (!w.browser || !w.browserProfile) continue
+        if (isWebAppClass(w.class)) continue
         var key = w.browser + "\u0001" + w.browserProfile
         if (seen[key]) continue
         seen[key] = true
@@ -460,6 +580,7 @@ export function attachTabs(windows, tabResults) {
     for (var i = 0; i < windows.length; i++) {
         var w = windows[i]
         if (!w.browser || !w.browserProfile) continue
+        if (isWebAppClass(w.class)) continue
         var key = w.browser + "\u0001" + w.browserProfile
         if (attached[key]) continue
         attached[key] = true
@@ -487,7 +608,7 @@ export function buildSnapshot(opts) {
 // wrapRestoreRunner() to get the outer `bash -c` argument that creates the
 // private temp dir. Ported verbatim from the QML widget so behaviour matches.
 // ---------------------------------------------------------------------------
-export function buildRestoreScript(profile, existing) {
+export function buildRestoreScript(profile, existing, liveMonitors) {
     var lines = ["#!/bin/bash"]
     lines.push('LOGFILE="$WSROOT/restore.log"')
     lines.push("SAFETY_OWNED=0")
@@ -555,7 +676,7 @@ export function buildRestoreScript(profile, existing) {
         // 1. exact class + title - the confident match.
         pass(function (e) {
             for (var p = 0; p < profile.windows.length; p++) {
-                if (!matched[p] && e.class === profile.windows[p].class && e.title === profile.windows[p].title) return p
+                if (!matched[p] && classesMatch(e, profile.windows[p]) && e.title === profile.windows[p].title) return p
             }
             return -1
         })
@@ -565,7 +686,7 @@ export function buildRestoreScript(profile, existing) {
         pass(function (e) {
             var ews = e.workspace ? String(e.workspace.name) : ""
             for (var p = 0; p < profile.windows.length; p++) {
-                if (!matched[p] && e.class === profile.windows[p].class && ews === String(profile.windows[p].workspace)) return p
+                if (!matched[p] && classesMatch(e, profile.windows[p]) && ews === String(profile.windows[p].workspace)) return p
             }
             return -1
         })
@@ -573,19 +694,21 @@ export function buildRestoreScript(profile, existing) {
         // 3. same class, first free slot - arbitrary order, last resort.
         pass(function (e) {
             for (var p = 0; p < profile.windows.length; p++) {
-                if (!matched[p] && e.class === profile.windows[p].class) return p
+                if (!matched[p] && classesMatch(e, profile.windows[p])) return p
             }
             return -1
         })
     }
 
     // Phase 0: pin each snapshotted workspace to its capture-time monitor
-    // before anything moves into it (Hyprland workspaces are global).
+    // before anything moves into it (Hyprland workspaces are global). A
+    // saved output that is gone (undocked) is remapped to the focused /
+    // remaining monitor so the pin does not target a name Hyprland lacks.
     var wsToMonitor = {}
     for (var wm = 0; wm < profile.windows.length; wm++) {
         var pws = safeWorkspace(profile.windows[wm].workspace)
-        var pmon = profile.windows[wm].monitor
-        if (pws !== null && pmon && /^[A-Za-z0-9-]{1,64}$/.test(pmon)) {
+        var pmon = resolveMonitorName(profile.windows[wm].monitor, liveMonitors)
+        if (pws !== null && pmon) {
             wsToMonitor[pws] = pmon
         }
     }
@@ -621,9 +744,12 @@ export function buildRestoreScript(profile, existing) {
 
 
     // Phase 3: spawn missing windows onto their target workspace
-    // (focus-then-launch).
+    // (focus-then-launch). Chrome web apps are launched AFTER the main
+    // browser: `--app=` as the process that *starts* Chrome dumps session
+    // restore onto that workspace as a normal Chrome window.
     var spawnCount = 0
     var spawnTargets = []
+    var spawnSpecs = []
     for (var j = 0; j < profile.windows.length; j++) {
         if (matched[j]) continue
         var w = profile.windows[j]
@@ -634,7 +760,20 @@ export function buildRestoreScript(profile, existing) {
             continue
         }
         var cmds
-        if (w.browser) {
+        var parsedWeb = parseWebAppClass(w.class)
+        var isWebApp = parsedWeb !== null
+        if (isWebApp && parsedWeb.kind === "url") {
+            // Same launcher the desktop file uses. Do not exec the browser
+            // binary with --app= — that starts a normal window, not an app.
+            var webCmd = webAppLaunchCommand(w.class) || w.command
+            var webLaunch = sanitizeLaunchCommand(webCmd)
+            cmds = webLaunch.length > 0 ? [webLaunch] : []
+        } else if (isWebApp && parsedWeb.kind === "appid") {
+            var appBase = browserRelaunchBase(w.command, cls)
+            cmds = appBase.length > 0
+                ? [appBase + " " + shellArg("--app-id=" + parsedWeb.appId) + " " + shellArg("--profile-directory=" + parsedWeb.profile)]
+                : []
+        } else if (w.browser) {
             // Never trust bare positional args (i.e. URLs) from a browser's
             // captured cmdline as launch arguments - see browserRelaunchBase.
             var browserBase = browserRelaunchBase(w.command, cls)
@@ -669,38 +808,59 @@ export function buildRestoreScript(profile, existing) {
                 'command -v mise >/dev/null 2>&1 && eval "$(mise env -s bash 2>/dev/null)" || true\n' +
                 launchline
         }
-        // Only touch the browser's own crash/session state when actually
-        // relaunching an explicit tab list on top of it - with no captured
-        // tabs (tab restore off, or none captured), the launch above is a
-        // bare `exec browser`, and Chrome should be left completely alone to
-        // do whatever it naturally does (which, left untouched, correctly
-        // restores its own last session on this first window - it only
-        // needs help here to avoid duplicating on top of an explicit list).
+        spawnSpecs.push({
+            j: j, w: w, ws: ws, cls: cls, launchline: launchline,
+            isWebApp: isWebApp,
+            floating: w.floating, fullscreen: w.fullscreen,
+            pos: w.position, size: w.size,
+        })
+    }
+
+    function jqClassMatchFilter(clsNorm) {
+        var jqNorm = 'ascii_downcase | gsub("\\\\._[0-9a-f]{8,}$"; "") | gsub("\\\\.desktop$"; "")'
+        return '.[] | select((( (.class // "") | ' + jqNorm + ' ) == "' + clsNorm + '") or (( (.initialClass // "") | ' + jqNorm + ' ) == "' + clsNorm + '"))'
+    }
+
+    function emitSpawn(spec) {
+        var w = spec.w
+        var cls = spec.cls
         if (w.browser && w.tabs && w.tabs.length > 0) {
-            var resetLines = resetChromiumCrashFlagLines(w.browserProfile, cls)
-            for (var r = 0; r < resetLines.length; r++) lines.push(resetLines[r])
             var clearLines = clearChromiumSessionSnapshotLines(w.browserProfile, cls)
             for (var c2 = 0; c2 < clearLines.length; c2++) lines.push(clearLines[c2])
         }
-        lines.push('SPATH="$WSROOT/spawn-' + j + '.sh"')
-        lines.push("printf '#!/bin/bash\\n%s\\n' " + shellArg(launchline) + ' > "$SPATH" && chmod 700 "$SPATH"')
-        lines.push("hyprctl dispatch \"hl.dsp.focus({workspace='" + ws + "'})\" 2>>\"$LOGFILE\" || true")
+        lines.push('SPATH="$WSROOT/spawn-' + spec.j + '.sh"')
+        lines.push("printf '#!/bin/bash\\n%s\\n' " + shellArg(spec.launchline) + ' > "$SPATH" && chmod 700 "$SPATH"')
+        lines.push("hyprctl dispatch \"hl.dsp.focus({workspace='" + spec.ws + "'})\" 2>>\"$LOGFILE\" || true")
         lines.push("sleep 0.3")
-        // setsid + closed stdio so the launched app fully detaches and never
-        // holds a caller's stdout/stderr open (which would make a `restore`
-        // that shelled out to this script appear to hang until the app quits).
         lines.push('setsid bash "$SPATH" >/dev/null 2>&1 &')
-        lines.push('echo "[launch] ws=' + ws + " cmd='$SPATH'\" >> \"$LOGFILE\"")
+        lines.push('echo "[launch] ws=' + spec.ws + " cmd='$SPATH'\" >> \"$LOGFILE\"")
 
         spawnTargets.push({
-            cls: cls, ws: ws, floating: w.floating, fullscreen: w.fullscreen,
-            pos: w.position, size: w.size
+            cls: spec.cls, ws: spec.ws, floating: spec.floating, fullscreen: spec.fullscreen,
+            pos: spec.pos, size: spec.size
         })
         spawnCount++
     }
 
+    // Web apps last so the browser process is up; omarchy-launch-webapp then
+    // opens an --app= window on the already-running browser instead of
+    // becoming the process that session-restores normal windows.
+    var webAppSpecs = []
+    for (var si = 0; si < spawnSpecs.length; si++) {
+        if (spawnSpecs[si].isWebApp) webAppSpecs.push(spawnSpecs[si])
+        else emitSpawn(spawnSpecs[si])
+    }
+    if (webAppSpecs.length > 0 && spawnCount > 0) {
+        lines.push("sleep 0.8")
+    }
+    for (var wi = 0; wi < webAppSpecs.length; wi++) {
+        emitSpawn(webAppSpecs[wi])
+    }
+
     // Phase 3b: detached class-based safety re-check for apps that ignore the
-    // focused workspace on launch (Electron apps especially).
+    // focused workspace on launch (Electron, Chrome web apps). All targets are
+    // polled in one loop so a class that never maps (e.g. a hashed telegram
+    // app_id) cannot stall the YouTube/Chrome moves behind a 15s timeout.
     if (spawnCount > 0) {
         var safety = []
         safety.push("#!/bin/bash")
@@ -709,40 +869,48 @@ export function buildRestoreScript(profile, existing) {
         safety.push('MATCHED_ADDRS="' + matchedAddrs.join(" ") + '"')
         safety.push("sleep 1")
         safety.push('MOVED_ADDRS=""')
+        for (var s0 = 0; s0 < spawnTargets.length; s0++) {
+            safety.push("HANDLED" + s0 + "=0")
+        }
+        safety.push("ATTEMPT=0")
+        safety.push("while [ $ATTEMPT -lt 30 ]; do")
+        safety.push("  PENDING=0")
         for (var s = 0; s < spawnTargets.length; s++) {
             var t = spawnTargets[s]
-            var clsNorm = t.cls.toLowerCase().replace(/\.desktop$/i, "")
-            var jqFilter = '.[] | select((.class | ascii_downcase | gsub("\\\\.desktop$"; "")) == "' + clsNorm + '") | [.address, .workspace.name] | @tsv'
-            safety.push("ATTEMPT=0")
-            safety.push("HANDLED=0")
-            safety.push("while [ $ATTEMPT -lt 30 ] && [ $HANDLED -eq 0 ]; do")
-            safety.push("  MATCHES=$(hyprctl clients -j | jq -r '" + jqFilter + "' 2>>\"$LOGFILE\")")
-            safety.push('  echo "[move-spawn] attempt=$ATTEMPT cls=' + t.cls + " ws=" + t.ws + ' matches=$MATCHES" >> "$LOGFILE"')
-            safety.push("  while IFS=$'\\t' read -r A W; do")
-            safety.push('    [ -z "$A" ] && continue')
-            safety.push('    if [[ " $MOVED_ADDRS " == *" $A "* ]] || [[ " $MATCHED_ADDRS " == *" $A "* ]]; then continue; fi')
-            safety.push('    MOVED_ADDRS="$MOVED_ADDRS $A"')
-            safety.push('    if [ "$W" != "' + t.ws + '" ]; then')
-            safety.push("      hyprctl dispatch \"hl.dsp.window.move({workspace='" + t.ws + "', window='address:$A', follow=false})\" 2>>\"$LOGFILE\" || true")
+            var clsNorm = normClass(t.cls)
+            var jqFilter = jqClassMatchFilter(clsNorm) + " | [.address, .workspace.name] | @tsv"
+            safety.push("  if [ $HANDLED" + s + " -eq 0 ]; then")
+            safety.push("    PENDING=1")
+            safety.push("    MATCHES=$(hyprctl clients -j | jq -r '" + jqFilter + "' 2>>\"$LOGFILE\")")
+            safety.push('    echo "[move-spawn] attempt=$ATTEMPT cls=' + t.cls + " ws=" + t.ws + ' matches=$MATCHES" >> "$LOGFILE"')
+            safety.push("    while IFS=$'\\t' read -r A W; do")
+            safety.push('      [ -z "$A" ] && continue')
+            safety.push('      if [[ " $MOVED_ADDRS " == *" $A "* ]] || [[ " $MATCHED_ADDRS " == *" $A "* ]]; then continue; fi')
+            safety.push('      MOVED_ADDRS="$MOVED_ADDRS $A"')
+            safety.push('      if [ "$W" != "' + t.ws + '" ]; then')
+            safety.push("        hyprctl dispatch \"hl.dsp.window.move({workspace='" + t.ws + "', window='address:$A', follow=false})\" 2>>\"$LOGFILE\" || true")
             if (t.floating) {
                 var sx = numOr(t.pos[0])
                 var sy = numOr(t.pos[1])
                 var sw = numOr(t.size[0])
                 var sh = numOr(t.size[1])
-                safety.push("      hyprctl dispatch \"hl.dsp.window.float({action='toggle', window='address:$A'})\" 2>>\"$LOGFILE\" || true")
-                safety.push("      hyprctl dispatch \"hl.dsp.window.move({x=" + sx + ", y=" + sy + ", relative=false, window='address:$A'})\" 2>>\"$LOGFILE\" || true")
-                safety.push("      hyprctl dispatch \"hl.dsp.window.resize({x=" + sw + ", y=" + sh + ", window='address:$A'})\" 2>>\"$LOGFILE\" || true")
+                safety.push("        hyprctl dispatch \"hl.dsp.window.float({action='toggle', window='address:$A'})\" 2>>\"$LOGFILE\" || true")
+                safety.push("        hyprctl dispatch \"hl.dsp.window.move({x=" + sx + ", y=" + sy + ", relative=false, window='address:$A'})\" 2>>\"$LOGFILE\" || true")
+                safety.push("        hyprctl dispatch \"hl.dsp.window.resize({x=" + sw + ", y=" + sh + ", window='address:$A'})\" 2>>\"$LOGFILE\" || true")
             }
             if (t.fullscreen) {
-                safety.push("      hyprctl dispatch \"hl.dsp.window.fullscreen({mode='fullscreen', window='address:$A'})\" 2>>\"$LOGFILE\" || true")
+                safety.push("        hyprctl dispatch \"hl.dsp.window.fullscreen({mode='fullscreen', window='address:$A'})\" 2>>\"$LOGFILE\" || true")
             }
-            safety.push("    fi")
-            safety.push("    HANDLED=1")
-            safety.push('  done <<< "$MATCHES"')
-            safety.push("  ATTEMPT=$((ATTEMPT+1))")
-            safety.push("  if [ $HANDLED -eq 0 ]; then sleep 0.5; fi")
-            safety.push("done")
+            safety.push("      fi")
+            safety.push("      HANDLED" + s + "=1")
+            safety.push("      break")
+            safety.push('    done <<< "$MATCHES"')
+            safety.push("  fi")
         }
+        safety.push("  if [ $PENDING -eq 0 ]; then break; fi")
+        safety.push("  ATTEMPT=$((ATTEMPT+1))")
+        safety.push("  sleep 0.5")
+        safety.push("done")
         lines.push("SAFETY_OWNED=1")
         lines.push('SAFETY="$WSROOT/safety.sh"')
         lines.push("printf '%s\\n' " + shellArg(safety.join("\n")) + ' > "$SAFETY" && chmod 700 "$SAFETY"')
@@ -804,6 +972,12 @@ export function isFreshLogin(ageSeconds, windowSeconds) {
 // signature and stands down.
 export function bootAppliedMarkerPath(runtimeDir) {
     return runtimeDir.replace(/\/$/, "") + "/session-restore/applied"
+}
+
+// Once-per-Hyprland-instance stamp so we only register exec-shutdown once,
+// not on every mid-session `omarchy restart shell`.
+export function shutdownHookMarkerPath(runtimeDir) {
+    return runtimeDir.replace(/\/$/, "") + "/session-restore/shutdown-hook"
 }
 
 // True when the stamp was written by the Hyprland session identified by

@@ -5,14 +5,12 @@
 // shell around). Pure logic lives in ../restoreLogic.mjs; system calls in
 // ../lib/io.mjs.
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync, rmSync, lstatSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import {
-    validProfilePath,
-    sanitizeProfileName,
     generateDefaultName,
+    validProfilePath,
     procInfoScript,
     parseProcInfo,
     assembleWindows,
@@ -25,9 +23,30 @@ import {
     isFreshLogin,
     bootAppliedMarkerPath,
     bootMarkerMatches,
+    shutdownHookMarkerPath,
+    shellArg,
 } from "../restoreLogic.mjs"
 
-import { hyprctlJson, bash, bashExit, notify, hasCommand, compositorAgeSeconds, currentSessionId } from "../lib/io.mjs"
+import {
+    hyprctlJson,
+    bash,
+    bashExit,
+    notify,
+    hasCommand,
+    run,
+    compositorAgeSeconds,
+    currentSessionId,
+    ensureOwnedDir,
+    readRegularBounded,
+    atomicWriteFile,
+    unlinkRegular,
+    listProfileNames,
+    loadProfile,
+    saveProfile,
+    deleteProfile,
+    readSettings,
+    writeSettings,
+} from "../lib/io.mjs"
 
 // How young the compositor must be for a `--boot` run to count as a login.
 const BOOT_WINDOW = Number(process.env.SESSION_RESTORE_BOOT_WINDOW) || 120
@@ -44,21 +63,8 @@ function die(msg, code = 1) {
     process.exit(code)
 }
 
-function ensureProfileDir() {
-    mkdirSync(PROFILE_DIR, { recursive: true })
-}
-
-function settingsPath() {
-    return join(PROFILE_DIR, "settings.json")
-}
-
-function readSettings() {
-    try {
-        var s = JSON.parse(readFileSync(settingsPath(), "utf8"))
-        return (s && typeof s === "object") ? s : {}
-    } catch {
-        return {}
-    }
+function isMissing(e) {
+    return e && (e.code === "ENOENT" || /no such file/i.test(e.message || ""))
 }
 
 // Off by default: browser tab capture/restore fights Chrome's own session
@@ -67,12 +73,19 @@ function readSettings() {
 // moved into place if running, launched bare if not - and Chrome is left
 // completely alone to do whatever it naturally does.
 function browserTabRestoreEnabled() {
-    return readSettings().browserTabRestore === true
+    try {
+        return readSettings(PROFILE_DIR).browserTabRestore === true
+    } catch {
+        return false
+    }
 }
 
 function readBootMarker() {
-    const p = bootMarkerPath(PROFILE_DIR)
-    return existsSync(p) ? readFileSync(p, "utf8").trim() : ""
+    try {
+        return readRegularBounded(bootMarkerPath(PROFILE_DIR), 4096).toString("utf8").trim()
+    } catch {
+        return ""
+    }
 }
 
 function resolveName(args, { forWrite }) {
@@ -104,12 +117,13 @@ function parseArgs(argv) {
 
 async function cmdSave(args) {
     const name = resolveName(args, { forWrite: true })
-    if (args.boot && !name) die("save --boot: no boot profile is set (use `boot-profile <name>` first)")
+    if (args.boot && !name) {
+        process.stdout.write("no boot profile set - nothing to save\n")
+        return
+    }
+    if (validProfilePath(name, PROFILE_DIR) === null) die(`invalid profile name: ${name}`)
 
-    const path = validProfilePath(name, PROFILE_DIR)
-    if (path === null) die(`invalid profile name: ${name}`)
-
-    if (!(await hasCommand("python3"))) {
+    if (browserTabRestoreEnabled() && !(await hasCommand("python3"))) {
         process.stderr.write("session-restore: python3 not found - browser tabs will not be captured\n")
     }
 
@@ -126,8 +140,11 @@ async function cmdSave(args) {
 
     const snapshot = buildSnapshot({ clients, monitors, procInfo, tabResults, home: HOME })
 
-    ensureProfileDir()
-    writeFileSync(path, JSON.stringify(snapshot, null, 2))
+    try {
+        saveProfile(PROFILE_DIR, name, snapshot)
+    } catch (e) {
+        die(e.message)
+    }
     process.stdout.write(`saved "${name}" (${snapshot.windows.length} windows)\n`)
 }
 
@@ -150,14 +167,7 @@ async function passesBootGuards(args) {
     const marker = bootAppliedMarkerPath(runtimeDir)
     const markerDir = dirname(marker)
     try {
-        if (existsSync(markerDir) && lstatSync(markerDir).isSymbolicLink()) {
-            die(`refusing to use ${markerDir}: it is a symlink`)
-        }
-        mkdirSync(markerDir, { recursive: true, mode: 0o700 })
-        const st = lstatSync(markerDir)
-        if (typeof process.getuid === "function" && st.uid !== process.getuid()) {
-            die(`refusing to use ${markerDir}: not owned by this user`)
-        }
+        ensureOwnedDir(markerDir)
     } catch (e) {
         die(`cannot prepare ${markerDir}: ${e.message}`)
     }
@@ -168,7 +178,7 @@ async function passesBootGuards(args) {
     // Hyprland run whose $XDG_RUNTIME_DIR was not cleared - and is overwritten.
     const sid = await currentSessionId()
     let prior = ""
-    try { prior = readFileSync(marker, "utf8") } catch { /* no stamp yet */ }
+    try { prior = readRegularBounded(marker, 4096).toString("utf8") } catch { /* no stamp yet */ }
 
     if (sid && bootMarkerMatches(prior, sid)) {
         process.stdout.write("already restored this Hyprland session - nothing to do\n")
@@ -178,7 +188,7 @@ async function passesBootGuards(args) {
     if (args.dryRun) return true
 
     try {
-        writeFileSync(marker, (sid || "1") + "\n")
+        atomicWriteFile(marker, (sid || "1") + "\n")
     } catch (e) {
         die(`cannot write ${marker}: ${e.message}`)
     }
@@ -195,31 +205,28 @@ async function cmdRestore(args) {
         die("restore: profile name required")
     }
 
-    const path = validProfilePath(name, PROFILE_DIR)
-    if (path === null) die(`invalid profile name: ${name}`)
-    if (!existsSync(path)) {
-        // For --boot this is a stale .boot-profile pointing at a deleted
-        // profile - not worth dying over, and not worth burning the stamp.
-        if (args.boot) {
-            process.stdout.write(`boot profile "${name}" no longer exists - nothing to restore\n`)
-            return
+    let profile
+    try {
+        profile = loadProfile(PROFILE_DIR, name)
+    } catch (e) {
+        if (isMissing(e)) {
+            // For --boot this is a stale .boot-profile pointing at a deleted
+            // profile - not worth dying over, and not worth burning the stamp.
+            if (args.boot) {
+                process.stdout.write(`boot profile "${name}" no longer exists - nothing to restore\n`)
+                return
+            }
+            die(`no such profile: ${name}`)
         }
-        die(`no such profile: ${name}`)
+        die(e.message)
+    }
+    if (!profile.windows.length) {
+        die(`profile is empty: ${name}`)
     }
 
     // Only now, with a real profile to restore, run the login guards (which
     // write the once-per-session stamp).
     if (args.boot && !(await passesBootGuards(args))) return
-
-    let profile
-    try {
-        profile = JSON.parse(readFileSync(path, "utf8"))
-    } catch {
-        die(`profile is not valid JSON: ${name}`)
-    }
-    if (!profile || !Array.isArray(profile.windows) || profile.windows.length === 0) {
-        die(`profile is empty: ${name}`)
-    }
 
     // The toggle governs restore too, not just future saves - a profile
     // saved while tab restore was on (or before this setting existed) should
@@ -235,7 +242,14 @@ async function cmdRestore(args) {
         existing = []
     }
 
-    const { script, count } = buildRestoreScript(profile, existing)
+    let liveMonitors = []
+    try {
+        liveMonitors = await hyprctlJson("monitors")
+    } catch {
+        liveMonitors = []
+    }
+
+    const { script, count } = buildRestoreScript(profile, existing, liveMonitors)
 
     if (args.dryRun) {
         process.stdout.write(script + "\n")
@@ -255,10 +269,7 @@ async function cmdRestore(args) {
 
 function listProfiles() {
     try {
-        return readdirSync(PROFILE_DIR)
-            .filter((f) => f.endsWith(".json"))
-            .map((f) => f.slice(0, -5))
-            .sort()
+        return listProfileNames(PROFILE_DIR)
     } catch {
         return []
     }
@@ -277,7 +288,7 @@ function cmdList(args) {
 // window count + save time for one profile, for the panel's row detail.
 function profileMeta(name) {
     try {
-        const p = JSON.parse(readFileSync(join(PROFILE_DIR, name + ".json"), "utf8"))
+        const p = loadProfile(PROFILE_DIR, name)
         return {
             name,
             windows: Array.isArray(p.windows) ? p.windows.length : 0,
@@ -314,14 +325,14 @@ function cmdStatus(args) {
 function cmdDelete(args) {
     const name = args.positionals[0]
     if (!name) die("delete: profile name required")
-    const path = validProfilePath(name, PROFILE_DIR)
-    if (path === null) die(`invalid profile name: ${name}`)
     try {
-        unlinkSync(path)
+        deleteProfile(PROFILE_DIR, name)
     } catch (e) {
         die(`could not delete ${name}: ${e.message}`)
     }
-    if (readBootMarker() === name) rmSync(bootMarkerPath(PROFILE_DIR), { force: true })
+    if (readBootMarker() === name) {
+        try { unlinkRegular(bootMarkerPath(PROFILE_DIR)) } catch { /* already gone */ }
+    }
     process.stdout.write(`deleted "${name}"\n`)
 }
 
@@ -332,17 +343,22 @@ function cmdTabRestore(args) {
         return
     }
     if (value !== "on" && value !== "off") die(`tab-restore: expected "on" or "off"`)
-    ensureProfileDir()
-    const settings = readSettings()
-    settings.browserTabRestore = (value === "on")
-    writeFileSync(settingsPath(), JSON.stringify(settings, null, 2))
+    try {
+        const settings = readSettings(PROFILE_DIR)
+        settings.browserTabRestore = (value === "on")
+        writeSettings(PROFILE_DIR, settings)
+    } catch (e) {
+        die(e.message)
+    }
     process.stdout.write(`browser tab restore: ${value}\n`)
 }
 
 function cmdBootProfile(args) {
     const marker = bootMarkerPath(PROFILE_DIR)
     if (args.clear) {
-        rmSync(marker, { force: true })
+        try { unlinkRegular(marker) } catch (e) {
+            if (!isMissing(e)) die(e.message)
+        }
         process.stdout.write("boot profile cleared\n")
         return
     }
@@ -351,11 +367,47 @@ function cmdBootProfile(args) {
         process.stdout.write(readBootMarker() + "\n")
         return
     }
-    if (sanitizeProfileName(name) === null) die(`invalid profile name: ${name}`)
-    if (!existsSync(validProfilePath(name, PROFILE_DIR))) die(`no such profile: ${name}`)
-    ensureProfileDir()
-    writeFileSync(marker, name + "\n")
+    try {
+        loadProfile(PROFILE_DIR, name)
+    } catch (e) {
+        if (isMissing(e) || /invalid profile name/.test(e.message)) die(`no such profile: ${name}`)
+        die(e.message)
+    }
+    try {
+        ensureOwnedDir(PROFILE_DIR)
+        atomicWriteFile(marker, name + "\n")
+    } catch (e) {
+        die(e.message)
+    }
     process.stdout.write(`boot profile set to "${name}"\n`)
+}
+
+// Register Hyprland exec-shutdown once per compositor instance so logout
+// overwrites the pinned session. Mid-session shell restarts see a matching
+// stamp and do not add a second hook.
+async function cmdInstallShutdownHook() {
+    const runtimeDir = process.env.XDG_RUNTIME_DIR
+    const sid = await currentSessionId()
+    if (runtimeDir && sid) {
+        const stamp = shutdownHookMarkerPath(runtimeDir)
+        try {
+            const prior = readRegularBounded(stamp, 4096).toString("utf8")
+            if (bootMarkerMatches(prior, sid)) {
+                process.stdout.write("shutdown hook already installed this session\n")
+                return
+            }
+        } catch { /* no stamp yet */ }
+        try { ensureOwnedDir(dirname(stamp)) } catch (e) { die(e.message) }
+    }
+
+    const cli = resolve(fileURLToPath(import.meta.url))
+    const hook = [process.execPath, cli, "save", "--boot"].map(shellArg).join(" ")
+    const { code, stderr } = await run("hyprctl", ["keyword", "exec-shutdown", hook])
+    if (code !== 0) die(`hyprctl keyword exec-shutdown failed: ${(stderr || "").trim()}`)
+    if (runtimeDir && sid) {
+        try { atomicWriteFile(shutdownHookMarkerPath(runtimeDir), sid + "\n") } catch (e) { die(e.message) }
+    }
+    process.stdout.write("installed hyprland exec-shutdown hook\n")
 }
 
 const HELP = `session-restore - save and restore your apps + window layout
@@ -369,6 +421,7 @@ Usage:
   session-restore boot-profile [name|--clear]
                                            get/set the profile restored on login
   session-restore tab-restore [on|off]     get/set browser tab capture+restore (default: off)
+  session-restore install-shutdown-hook    register logout save of the pinned session
 
 Profiles live in ${PROFILE_DIR}
 (override with SESSION_RESTORE_DIR).
@@ -393,6 +446,7 @@ async function main() {
         case "delete": case "rm": return cmdDelete(args)
         case "boot-profile": return cmdBootProfile(args)
         case "tab-restore": return cmdTabRestore(args)
+        case "install-shutdown-hook": return cmdInstallShutdownHook()
         default: die(`unknown command: ${sub} (try --help)`)
     }
 }

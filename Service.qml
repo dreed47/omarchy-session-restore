@@ -24,6 +24,10 @@ Item {
         Quickshell.execDetached(["node", root.cliPath, "restore", "--boot"])
     }
 
+    function installShutdownHook() {
+        Quickshell.execDetached(["node", root.cliPath, "install-shutdown-hook"])
+    }
+
     IpcHandler {
         // Distinct from the bar widget's "session-restore" target so the two
         // IpcHandlers do not collide.
@@ -34,10 +38,12 @@ Item {
         function applyLogin(): void { root.restoreBoot() }
     }
 
-    // The shell is started by Hyprland's autostart, so at Component.onCompleted
-    // the compositor is up but workspaces may not have settled. A short wait
-    // lets apps land on a stable desktop; the CLI's own compositor-age guard
-    // still decides whether this counts as a login at all.
+    // Register exec-shutdown immediately so a fast logout still refreshes the
+    // pin. Restore waits: at Component.onCompleted the compositor is up but
+    // workspaces may not have settled; the CLI's compositor-age guard still
+    // decides whether this start is a login at all.
+    Component.onCompleted: root.installShutdownHook()
+
     Timer {
         interval: 3000
         repeat: false

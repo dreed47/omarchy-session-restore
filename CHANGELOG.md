@@ -1,5 +1,51 @@
 # Changelog
 
+## [2.4.0] - 2026-09-11
+
+### Added
+
+- **Missing-monitor fallback.** If a saved output is gone (undocked laptop), workspaces that were on it are pinned to the focused remaining monitor instead of dispatching a move to a name Hyprland does not have.
+- **Pinned session refreshes on logout.** The service registers a Hyprland `exec-shutdown` hook (once per compositor instance, so a mid-session shell restart does not add another) that runs `save --boot`. No pin set is a no-op.
+
+### Changed
+
+- Capture skips Hyprland special/scratchpad workspaces, xdg-desktop-portal, polkit, and notification daemons (`mako` / `dunst` / `swaync`), in addition to `org.quickshell`.
+- `save` no longer warns about missing `python3` unless browser tab restore is on.
+- README and NOTICE cover web-app restore, logout pin refresh, missing-monitor
+  fallback, capture skips, and the `jq` requirement.
+
+## [2.3.3] - 2026-09-11
+
+### Fixed
+
+- **Web apps still restored as extra normal browser windows, never as the app.** Execing `chrome --app=URL` (with or without waiting for session restore) does not create an Omarchy web-app window — that path is `omarchy-launch-webapp`, which goes through `uwsm-app` and the user's default Chromium-family browser. Restore now launches URL-style web-app classes (`chrome-youtube.com__-Default`, `brave-…`, `msedge-…`, `vivaldi-…`, `opera-…`, `helium-…`, `chromium-…`) with `omarchy-launch-webapp https://host/`, after the main browser window, and records that command at save time so they no longer share the browser's `/proc` cmdline.
+
+## [2.3.2] - 2026-09-11
+
+### Fixed
+
+- **`--app=` as the first Chrome launch restored a normal Chrome window onto the web-app workspace.** Starting Chrome with `--app=https://youtube.com` makes that process the session-restore target, so the regular browser lands on ws6 instead of a YouTube app window. Restore now starts the main Chrome window first, waits briefly for the web-app class to appear from Chrome's own session, and only then runs `--app=` if it is still missing.
+
+## [2.3.1] - 2026-09-11
+
+### Fixed
+
+- **Chrome web apps (YouTube, etc.) restored onto the wrong workspace.** A window like `chrome-youtube.com__-Default` shares Chrome's PID, so the captured command is bare `chrome` with no `--app`. Restore launched a second normal Chrome window, which Chrome's single-instance process opened on whichever workspace the first Chrome had mapped (usually ws1). Restore now rebuilds `--app=https://host` / `--app-id=` from the window class. The safety pass also polls every spawned class in one loop (a hashed Telegram app_id can no longer stall the Chrome moves behind a 15s timeout) and matches `initialClass` as well as `class`.
+
+## [2.3.0] - 2026-09-11
+
+### Fixed
+
+- **`settings.json` showed up as a saved session.** Tab-restore stored its toggle as `settings.json` in the profile directory, and `list` treated every `*.json` as a session. Settings now live in `.settings.json` (hidden from list); an existing `settings.json` that is actually the toggle is migrated. A real session named `settings` is left alone.
+
+### Security
+
+- Profile directory reads, writes, and deletes go through a hardened store in `lib/io.mjs`: `O_NOFOLLOW` (never follow a symlink), fstat regular-file + owner, 8 MB byte cap, max 512 windows / 300 tabs / 256 profiles. Saves are atomic (same-dir exclusive temp + rename). A planted symlink or FIFO can no longer redirect a login restore.
+
+### Changed
+
+- **Dropped the `jq` rewrite of Chrome `Preferences` (`profile.exit_type`).** It did not stop Chrome 152 from restoring its own session (the `Sessions/Session_*` wipe is the fix that works) and it was the only write into another app's config. Tab restore still clears `Sessions/Session_*` + `Tabs_*` before launching an explicit tab list.
+
 ## [2.2.0] - 2026-09-06
 
 ### Fixed

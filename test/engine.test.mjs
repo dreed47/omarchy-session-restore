@@ -5,6 +5,9 @@ import {
     procInfoScript,
     parseProcInfo,
     assembleWindows,
+    isInfrastructureWindow,
+    resolveMonitorName,
+    pickFallbackMonitor,
     tabCaptureInvocations,
     parseTabResults,
     attachTabs,
@@ -16,6 +19,7 @@ import {
     isFreshLogin,
     bootAppliedMarkerPath,
     bootMarkerMatches,
+    shutdownHookMarkerPath,
 } from "../restoreLogic.mjs"
 
 const HOME = "/home/user"
@@ -120,6 +124,18 @@ test("assembleWindows detects browsers and resolves their profile dir", () => {
     assert.equal(w[1].floating, true)
 })
 
+test("assembleWindows records omarchy-launch-webapp for a web-app class sharing the browser PID", () => {
+    const clients = [{
+        class: "chrome-youtube.com__-Default", title: "YouTube", pid: 200, address: "0xcc",
+        workspace: { name: "6", id: 6 }, monitor: 1, at: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+    }]
+    const proc = { "200": { pid: "200", cmdline: "/opt/google/chrome/chrome", cwd: "/home/user" } }
+    const w = assembleWindows({ clients, monitors: MONITORS, procInfo: proc, home: HOME })
+    assert.equal(w.length, 1)
+    assert.equal(w[0].command, "omarchy-launch-webapp https://youtube.com/")
+    assert.equal(w[0].browser, null)
+})
+
 test("assembleWindows falls back to raw monitor id and null command", () => {
     const w = assembleWindows({
         clients: [{ class: "x", title: "", pid: 1, address: "0x1", workspace: { name: "1", id: 1 }, monitor: 9, at: [0, 0], size: [1, 1] }],
@@ -137,6 +153,37 @@ test("assembleWindows excludes the Omarchy shell's own surfaces", () => {
     const w = assembleWindows({ clients, monitors: MONITORS, procInfo: {}, home: HOME })
     assert.equal(w.length, 1)
     assert.equal(w[0].class, "code")
+})
+
+test("assembleWindows skips special workspaces, portals, polkit, and notification daemons", () => {
+    const clients = [
+        { class: "foot", title: "term", pid: 1, address: "0x1", workspace: { name: "special:magic", id: -99 }, monitor: 0, at: [0, 0], size: [1, 1] },
+        { class: "xdg-desktop-portal-gtk", title: "", pid: 2, address: "0x2", workspace: { name: "1", id: 1 }, monitor: 0, at: [0, 0], size: [1, 1] },
+        { class: "polkit-gnome-authentication-agent-1", title: "", pid: 3, address: "0x3", workspace: { name: "1", id: 1 }, monitor: 0, at: [0, 0], size: [1, 1] },
+        { class: "mako", title: "", pid: 4, address: "0x4", workspace: { name: "1", id: 1 }, monitor: 0, at: [0, 0], size: [1, 1] },
+        { class: "code", title: "Editor", pid: 5, address: "0x5", workspace: { name: "1", id: 1 }, monitor: 0, at: [0, 0], size: [1, 1] },
+    ]
+    const w = assembleWindows({ clients, monitors: MONITORS, procInfo: {}, home: HOME })
+    assert.equal(w.length, 1)
+    assert.equal(w[0].class, "code")
+})
+
+test("isInfrastructureWindow is conservative", () => {
+    assert.equal(isInfrastructureWindow({ class: "code", workspace: { name: "1" } }), false)
+    assert.equal(isInfrastructureWindow({ class: "google-chrome", workspace: { name: "1" } }), false)
+    assert.equal(isInfrastructureWindow({ class: "foot", workspace: { name: "special" } }), true)
+    assert.equal(isInfrastructureWindow({ class: "swaync", workspace: { name: "1" } }), true)
+})
+
+test("resolveMonitorName keeps a still-connected output and remaps a missing one", () => {
+    const live = [
+        { name: "eDP-1", focused: true },
+        { name: "DP-2", focused: false },
+    ]
+    assert.equal(resolveMonitorName("DP-2", live), "DP-2")
+    assert.equal(resolveMonitorName("HDMI-A-1", live), "eDP-1")
+    assert.equal(pickFallbackMonitor(live), "eDP-1")
+    assert.equal(resolveMonitorName("HDMI-A-1", []), "HDMI-A-1")
 })
 
 // --- tab capture routing ---
@@ -210,6 +257,20 @@ test("buildRestoreScript pins workspaces to monitors before moving anything", ()
     assert.match(script, /hl\.dsp\.workspace\.move\(\{workspace='3', monitor='DP-1'\}\)/)
 })
 
+test("buildRestoreScript remaps a missing monitor onto the focused live output", () => {
+    const profile = {
+        windows: [
+            { class: "code", title: "Editor", workspace: "6", monitor: "HDMI-A-1", command: "code", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0 },
+            { class: "foot", title: "t", workspace: "1", monitor: "eDP-1", command: "foot", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0 },
+        ],
+    }
+    const live = [{ name: "eDP-1", focused: true }]
+    const { script } = buildRestoreScript(profile, [], live)
+    assert.match(script, /workspace='6', monitor='eDP-1'/)
+    assert.match(script, /workspace='1', monitor='eDP-1'/)
+    assert.doesNotMatch(script, /HDMI-A-1/)
+})
+
 test("buildRestoreScript cds to the captured cwd before launching", () => {
     const profile = {
         windows: [{
@@ -259,8 +320,65 @@ test("buildRestoreScript safety pass matches *.desktop classes after jq strip", 
         }],
     }
     const { script } = buildRestoreScript(profile, [])
-    assert.match(script, /gsub\("\\\\.desktop\$"; ""\)\) == "org\.telegram"/)
+    assert.match(script, /== "org\.telegram"/)
     assert.doesNotMatch(script, /== "org\.telegram\.desktop"/)
+})
+
+test("buildRestoreScript launches web apps via omarchy-launch-webapp, after the browser", () => {
+    // Web-app windows share the browser PID, so the captured cmdline is bare
+    // `chrome` with no --app. Execing that with --app= starts a normal browser
+    // window. The desktop launcher is omarchy-launch-webapp (any Chromium-family
+    // default browser).
+    const profile = {
+        windows: [
+            {
+                class: "chrome-youtube.com__-Default", title: "YouTube", workspace: "6", monitor: "HDMI-A-1",
+                command: "/opt/google/chrome/chrome", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+                browser: "chromium", browserProfile: "/home/user/.config/google-chrome", tabs: [],
+            },
+            {
+                class: "google-chrome", title: "GitHub", workspace: "1", monitor: "DP-2",
+                command: "/opt/google/chrome/chrome", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+                browser: "chromium", browserProfile: "/home/user/.config/google-chrome", tabs: null,
+            },
+        ],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.match(script, /omarchy-launch-webapp'\\'' '\\''https:\/\/youtube\.com\//)
+    assert.doesNotMatch(script, /chrome'\\'' '\\''--app=/)
+    assert.match(script, /hl\.dsp\.focus\(\{workspace='6'\}\)/)
+    assert.match(script, /hl\.dsp\.focus\(\{workspace='1'\}\)/)
+    const iMain = script.indexOf("hl.dsp.focus({workspace='1'})")
+    const iApp = script.indexOf("omarchy-launch-webapp")
+    assert.ok(iMain >= 0 && iApp >= 0 && iMain < iApp, "browser launch must precede web app")
+    assert.doesNotMatch(script, /wait-for-webapp/)
+    assert.equal((script.match(/while \[ \$ATTEMPT -lt 30 \]/g) || []).length, 1)
+    assert.match(script, /HANDLED0=0/)
+    assert.match(script, /initialClass/)
+})
+
+test("buildRestoreScript launches a Brave web app the same way", () => {
+    const profile = {
+        windows: [{
+            class: "brave-youtube.com__-Default", title: "YouTube", workspace: "3", monitor: "eDP-1",
+            command: "/usr/bin/brave", position: [0, 0], size: [1, 1], floating: false, fullscreen: 0,
+            browser: "chromium", tabs: null,
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.match(script, /omarchy-launch-webapp'\\'' '\\''https:\/\/youtube\.com\//)
+})
+
+test("attachTabs skips Chrome web-app windows so tabs land on the real browser", () => {
+    const windows = [
+        { class: "chrome-youtube.com__-Default", browser: "chromium", browserProfile: "/p/cr", tabs: null },
+        { class: "google-chrome", browser: "chromium", browserProfile: "/p/cr", tabs: null },
+    ]
+    const key = "chromium\u0001/p/cr"
+    attachTabs(windows, { [key]: { ok: true, tabs: [{ url: "https://a" }] } })
+    assert.equal(windows[0].tabs, null)
+    assert.deepEqual(windows[1].tabs, [{ url: "https://a" }])
+    assert.equal(tabCaptureInvocations(windows, "/x.py").length, 1)
 })
 
 test("buildRestoreScript moves an already-open window instead of spawning it", () => {
@@ -344,7 +462,10 @@ test("buildRestoreScript leaves an already-running browser's tabs alone", () => 
     assert.equal(count, 1)
 })
 
-test("buildRestoreScript resets a spawned Chromium window's crash flag before launch", () => {
+test("buildRestoreScript does not rewrite Chrome Preferences on tab restore", () => {
+    // Resetting profile.exit_type never stopped Chrome 152 from restoring its
+    // own session, and it was a write into another app's config. The session
+    // snapshot wipe is the remaining, sufficient fix.
     const profile = {
         windows: [{
             class: "google-chrome", title: "x", workspace: "1", monitor: "DP-1",
@@ -355,10 +476,8 @@ test("buildRestoreScript resets a spawned Chromium window's crash flag before la
         }],
     }
     const { script } = buildRestoreScript(profile, [])
-    assert.match(script, /Default\/Preferences/)
-    assert.match(script, /profile\.exit_type = "Normal"/)
-    // the patch must run before the app is launched
-    assert.ok(script.indexOf('exit_type = "Normal"') < script.indexOf("SPATH="))
+    assert.doesNotMatch(script, /Preferences/)
+    assert.doesNotMatch(script, /exit_type/)
 })
 
 test("buildRestoreScript clears a spawned Chromium window's session snapshot before launch", () => {
@@ -386,8 +505,8 @@ test("buildRestoreScript leaves a not-running browser's own restore alone when i
     // With browser tab restore off (the `tab-restore` CLI setting, default
     // off), or simply no tabs having been captured, the CLI zeroes out
     // profile.windows[].tabs before this ever runs. The launch must then be
-    // a bare `exec browser` with no crash-flag reset and no session-snapshot
-    // clear - both exist only to make an explicit tab list land cleanly, and
+    // a bare `exec browser` with no session-snapshot clear - that wipe exists
+    // only to make an explicit tab list land cleanly, and
     // with nothing explicit being passed, Chrome should be left completely
     // free to do its own thing (which correctly restores its last session on
     // a first window, same as the user launching it themselves).
@@ -488,6 +607,10 @@ test("isFreshLogin: unknown age is treated as a login", () => {
 test("bootAppliedMarkerPath lives under the runtime dir", () => {
     assert.equal(bootAppliedMarkerPath("/run/user/1000"), "/run/user/1000/session-restore/applied")
     assert.equal(bootAppliedMarkerPath("/run/user/1000/"), "/run/user/1000/session-restore/applied")
+})
+
+test("shutdownHookMarkerPath lives under the runtime dir", () => {
+    assert.equal(shutdownHookMarkerPath("/run/user/1000"), "/run/user/1000/session-restore/shutdown-hook")
 })
 
 test("bootMarkerMatches: same signature = this login already handled", () => {

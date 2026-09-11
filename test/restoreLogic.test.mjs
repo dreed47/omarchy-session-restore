@@ -7,7 +7,14 @@ import {
     sanitizeLaunchCommand,
     sanitizeCwd,
     browserRelaunchBase,
-    resetChromiumCrashFlagLines,
+    parseWebAppClass,
+    isWebAppClass,
+    webAppLaunchCommand,
+    normClass,
+    classesMatch,
+    enforceProfileCardinality,
+    MAX_WINDOWS,
+    MAX_TABS_PER_WINDOW,
     safeWorkspace,
     safeClass,
     numOr,
@@ -168,22 +175,77 @@ test("browserRelaunchBase rejects an unsafe executable token", () => {
     assert.equal(browserRelaunchBase("$(evil) https://x.example/", "firefox"), "")
 })
 
-// --- resetChromiumCrashFlagLines ---
+// --- Chromium-family web apps (omarchy-launch-webapp / --app=) ---
 
-test("resetChromiumCrashFlagLines patches exit_type for a chromium profile", () => {
-    const lines = resetChromiumCrashFlagLines("/home/user/.config/google-chrome", "google-chrome")
-    const script = lines.join("\n")
-    assert.match(script, /'\/home\/user\/\.config\/google-chrome\/Default\/Preferences'/)
-    assert.match(script, /profile\.exit_type = "Normal"/)
-    assert.match(script, /^if \[ -f /)
+test("webAppLaunchCommand rebuilds omarchy-launch-webapp from a host-style class", () => {
+    assert.equal(
+        webAppLaunchCommand("chrome-youtube.com__-Default"),
+        "omarchy-launch-webapp https://youtube.com/",
+    )
+    assert.equal(
+        webAppLaunchCommand("brave-www.youtube.com__-Default"),
+        "omarchy-launch-webapp https://www.youtube.com/",
+    )
+    assert.equal(
+        webAppLaunchCommand("microsoft-edge-music.youtube.com__-Default"),
+        "omarchy-launch-webapp https://music.youtube.com/",
+    )
+    assert.equal(parseWebAppClass("vivaldi-x.com__-Default").product, "vivaldi")
 })
 
-test("resetChromiumCrashFlagLines is a no-op for firefox and missing profiles", () => {
-    assert.deepEqual(resetChromiumCrashFlagLines("/home/user/.mozilla/firefox/x", "firefox"), [])
-    assert.deepEqual(resetChromiumCrashFlagLines(null, "google-chrome"), [])
-    assert.deepEqual(resetChromiumCrashFlagLines("", "google-chrome"), [])
+test("parseWebAppClass recognises an installed PWA class", () => {
+    const p = parseWebAppClass("chrome-agimnkijcaahngcdmfeangaknmldooml-Default")
+    assert.equal(p.kind, "appid")
+    assert.equal(p.appId, "agimnkijcaahngcdmfeangaknmldooml")
+    assert.equal(webAppLaunchCommand("chrome-agimnkijcaahngcdmfeangaknmldooml-Default"), null)
 })
 
+test("web apps are not confused with a normal browser window", () => {
+    assert.equal(webAppLaunchCommand("google-chrome"), null)
+    assert.equal(webAppLaunchCommand("firefox"), null)
+    assert.equal(webAppLaunchCommand("chrome-not a host__-Default"), null)
+    assert.equal(isWebAppClass("chrome-youtube.com__-Default"), true)
+    assert.equal(isWebAppClass("brave-youtube.com__-Default"), true)
+    assert.equal(isWebAppClass("google-chrome"), false)
+})
+
+test("normClass strips .desktop and Wayland instance suffixes", () => {
+    assert.equal(normClass("org.telegram.desktop"), "org.telegram")
+    assert.equal(normClass("org.telegram.desktop._e854658b877a15368eea0a076f78c6ed"), "org.telegram")
+    assert.equal(normClass("chrome-youtube.com__-Default"), "chrome-youtube.com__-default")
+    assert.equal(normClass("Google-chrome"), "google-chrome")
+})
+
+test("classesMatch uses class and initialClass", () => {
+    assert.equal(classesMatch({ class: "google-chrome" }, { class: "Google-chrome" }), true)
+    assert.equal(classesMatch({ class: "google-chrome" }, { class: "chrome-youtube.com__-Default" }), false)
+    assert.equal(
+        classesMatch({ class: "google-chrome", initialClass: "chrome-youtube.com__-Default" }, { class: "chrome-youtube.com__-Default" }),
+        true,
+    )
+})
+
+// --- enforceProfileCardinality ---
+
+test("enforceProfileCardinality accepts a well-formed profile", () => {
+    const p = { windows: [{ class: "code", tabs: [{ url: "https://x" }] }] }
+    assert.equal(enforceProfileCardinality(p), p)
+    assert.deepEqual(enforceProfileCardinality({ windows: [] }), { windows: [] })
+    assert.ok(enforceProfileCardinality({ windows: [{ class: "x" }] }))
+})
+
+test("enforceProfileCardinality rejects malformed or oversized profiles", () => {
+    assert.equal(enforceProfileCardinality(null), null)
+    assert.equal(enforceProfileCardinality([]), null)
+    assert.equal(enforceProfileCardinality({}), null)
+    assert.equal(enforceProfileCardinality({ windows: "nope" }), null)
+    assert.equal(enforceProfileCardinality({ windows: [null] }), null)
+    assert.equal(enforceProfileCardinality({ windows: [[]] }), null)
+    assert.equal(enforceProfileCardinality({ windows: Array.from({ length: MAX_WINDOWS + 1 }, () => ({})) }), null)
+    assert.equal(enforceProfileCardinality({ windows: [{ tabs: Array.from({ length: MAX_TABS_PER_WINDOW + 1 }, () => ({})) }] }), null)
+    assert.ok(enforceProfileCardinality({ windows: Array.from({ length: MAX_WINDOWS }, () => ({})) }))
+    assert.ok(enforceProfileCardinality({ windows: [{ tabs: Array.from({ length: MAX_TABS_PER_WINDOW }, () => ({})) }] }))
+})
 
 // --- safeWorkspace ---
 

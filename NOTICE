@@ -12,6 +12,10 @@ originate from that project.
 Changes in this fork:
 - Renamed the plugin to "Session Restore"
   (id: io.github.dreed47.session-restore).
-- Adds automatic session restore after a reboot / login, driven by an
-  Omarchy post-boot hook, with a designated "boot profile".
+- Adds automatic session restore after a reboot / login, with a designated
+  boot profile; the pin is overwritten on Hyprland logout.
 - Profile storage moved to ~/.config/omarchy/session-restore/.
+- Standalone Node CLI is the single save/restore engine (bar + login service).
+- Omarchy web apps restore via omarchy-launch-webapp, not the shared browser
+  cmdline.
+- Hardened profile I/O (O_NOFOLLOW, size/cardinality caps, atomic writes).
