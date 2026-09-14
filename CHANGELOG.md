@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.4.1] - 2026-09-14
+
+### Security
+
+- **Automatic restore no longer runs `mise env` in captured project directories.** Restore still `cd`s to the captured cwd, but it stopped evaluating `mise env -s bash` there — that ran unattended, with no trust check, so a project directory's own `mise.toml` (`[env]` exec templates, tasks, hooks) could get silent shell execution on every login/reboot restore, including one that was modified after being trusted for unrelated reasons. Project env (mise, direnv, ...) should now load through the user's own interactive shell activation in the spawned terminal, where its normal trust prompts still apply. (reported via marketplace review)
+
 ## [2.4.0] - 2026-09-11
 
 ### Added

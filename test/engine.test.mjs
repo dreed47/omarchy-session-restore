@@ -282,13 +282,12 @@ test("buildRestoreScript cds to the captured cwd before launching", () => {
     }
     const { script } = buildRestoreScript(profile, [])
     assert.match(script, /cd '\\''\/home\/alex\/Work'\\'' 2>\/dev\/null \|\| true/)
-    assert.match(script, /command -v mise/)
-    assert.match(script, /mise env -s bash/)
+    assert.doesNotMatch(script, /mise/)
     assert.match(script, /'\/usr\/bin\/ghostty'\\'' '\\''--class=org\.omarchy\.agent'\\'' '\\''-e'\\'' '\\''opencode'\\'' '\\''--auto'/)
     assert.doesNotMatch(script, /gtk-single-instance/)
 })
 
-test("buildRestoreScript does not cd or eval mise env for browser windows", () => {
+test("buildRestoreScript does not cd for browser windows", () => {
     const profile = {
         windows: [{
             class: "google-chrome", title: "Chrome", workspace: "1", monitor: "eDP-1",

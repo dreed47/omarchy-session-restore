@@ -44,8 +44,8 @@ export function sanitizeLaunchCommand(raw, fallbackClass) {
     var out = []
     for (var i = 0; i < tokens.length; i++) {
         // A captured gtk-single-instance terminal is forwarded to an already
-        // running ghostty/gtk process (wrong cwd, so project env like mise
-        // [env] never loads). Drop it so restore starts a real new process.
+        // running ghostty/gtk process (wrong cwd). Drop it so restore starts
+        // a real new process in the captured cwd.
         if (/^--gtk-single-instance(=true)?$/.test(tokens[i])) continue
         out.push(shellArg(tokens[i]))
     }
@@ -801,12 +801,14 @@ export function buildRestoreScript(profile, existing, liveMonitors) {
         var launchline = steps.length > 0 ? steps.join("\n") : "exit 1"
         var cwd = !w.browser ? sanitizeCwd(w.cwd) : null
         if (cwd) {
-            // cwd alone is not enough: ghostty -e runs the binary without a
-            // shell, so mise [env] (project API keys) never loads. Eval after
-            // cd so the exec'd process inherits directory-scoped env.
-            launchline = "cd " + shellArg(cwd) + " 2>/dev/null || true\n" +
-                'command -v mise >/dev/null 2>&1 && eval "$(mise env -s bash 2>/dev/null)" || true\n' +
-                launchline
+            // Only cd - do not run project tooling (e.g. `mise env`) here.
+            // Automatic restore is unattended and this eval ran with no
+            // trust check, so a captured project directory could define its
+            // own env/exec hooks and get silent shell execution on every
+            // reboot. Project env (mise, direnv, ...) should load through
+            // the user's own interactive shell activation in the spawned
+            // terminal, where its normal trust prompts still apply.
+            launchline = "cd " + shellArg(cwd) + " 2>/dev/null || true\n" + launchline
         }
         spawnSpecs.push({
             j: j, w: w, ws: ws, cls: cls, launchline: launchline,
