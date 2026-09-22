@@ -495,9 +495,27 @@ test("buildRestoreScript clears a spawned Chromium window's session snapshot bef
         }],
     }
     const { script } = buildRestoreScript(profile, [])
-    assert.match(script, /Default\/Sessions'\/Session_\* .*Default\/Sessions'\/Tabs_\*/)
+    assert.match(script, /realpath -e '.*Default\/Sessions'/)
+    assert.match(script, /\[ -O "\$SESS_REAL" \]/)
+    assert.match(script, /find "\$SESS_REAL" -maxdepth 1 -type f \\\( -name 'Session_\*' -o -name 'Tabs_\*' \\\) -delete/)
     // must run before the app is launched
-    assert.ok(script.indexOf("Sessions'/Session_*") < script.indexOf("SPATH="))
+    assert.ok(script.indexOf("realpath -e") < script.indexOf("SPATH="))
+})
+
+test("buildRestoreScript never shells out a raw rm against the session snapshot", () => {
+    // A captured/hand-edited browserProfile must never reach an unguarded
+    // delete - every removal has to go through the realpath+ownership gate.
+    const profile = {
+        windows: [{
+            class: "google-chrome", title: "x", workspace: "1", monitor: "DP-1",
+            command: "/opt/google/chrome/chrome", position: [0, 0], size: [1, 1],
+            floating: false, fullscreen: 0,
+            browser: "chromium", browserProfile: "/home/user/.config/google-chrome",
+            tabs: [{ url: "https://example.com/" }],
+        }],
+    }
+    const { script } = buildRestoreScript(profile, [])
+    assert.doesNotMatch(script, /rm -f [^\n]*Session_/)
 })
 
 test("buildRestoreScript leaves a not-running browser's own restore alone when it has no captured tabs", () => {

@@ -160,15 +160,27 @@ export function classesMatch(a, b) {
 // and was a write into another app's config, so it is gone. Deleting the
 // snapshot files before launch is the fix that actually works. Best-effort:
 // a missing Sessions dir is a no-op.
+//
+// browserProfile is a captured/saved value, not something this deletion may
+// trust directly: it is read back from a session file on disk (editable) and
+// this runs unattended at login/reboot restore, so it is re-resolved and
+// re-validated right here, at the moment of deletion, rather than trusting
+// whatever it resolved to at capture time. `realpath -e` collapses any `..`
+// or symlink hops and requires the result to actually exist; `-O` then
+// requires that real path be owned by the user running this restore. Only
+// then does `find -type f` (never dereferences a symlink for its own name)
+// delete the two known snapshot filename patterns - so neither a spoofed
+// profile path nor a symlink planted between capture and restore can redirect
+// the delete anywhere else. Any failure at any step is a silent no-op.
 export function clearChromiumSessionSnapshotLines(browserProfile, cls) {
     if (!browserProfile || browserTypeForClass(cls) !== "chromium") return []
     var base = String(browserProfile).replace(/\/$/, "")
-    // Quoted directory + unquoted glob suffix: the shell concatenates them
-    // into one word before pathname expansion, so the glob still expands
-    // (an entirely single-quoted path would not).
-    var sessions = shellArg(base + "/Default/Sessions")
+    var sessionsQ = shellArg(base + "/Default/Sessions")
     return [
-        "rm -f " + sessions + "/Session_* " + sessions + "/Tabs_* 2>/dev/null || true",
+        "SESS_REAL=$(realpath -e " + sessionsQ + " 2>/dev/null) || SESS_REAL=",
+        'if [ -n "$SESS_REAL" ] && [ -d "$SESS_REAL" ] && [ -O "$SESS_REAL" ]; then',
+        "  find \"$SESS_REAL\" -maxdepth 1 -type f \\( -name 'Session_*' -o -name 'Tabs_*' \\) -delete 2>/dev/null || true",
+        "fi",
     ]
 }
 

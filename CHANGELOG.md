@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.4.2] - 2026-09-22
+
+### Security
+
+- **Automatic restore's Chromium session-snapshot cleanup could be redirected by a captured/hand-edited `browserProfile` path.** The deletion (`Session_*`/`Tabs_*` inside `<profile>/Default/Sessions`, added in v2.1.0 to stop tab duplication) trusted that path directly. It now re-resolves it with `realpath -e` and requires the real, existing target to be owned by the user running the restore before touching anything, then deletes only actual regular files matching the two known snapshot names (`find -type f`, which never follows a symlink planted with a matching name) — so neither a spoofed profile path nor a symlink placed between capture and this unattended restore can point the delete anywhere else. (reported via marketplace review, omacom/omarchy-plugin-marketplace#6398)
+
 ## [2.4.1] - 2026-09-14
 
 ### Security
