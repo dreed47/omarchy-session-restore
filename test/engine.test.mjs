@@ -495,16 +495,20 @@ test("buildRestoreScript clears a spawned Chromium window's session snapshot bef
         }],
     }
     const { script } = buildRestoreScript(profile, [])
-    assert.match(script, /realpath -e '.*Default\/Sessions'/)
-    assert.match(script, /\[ -O "\$SESS_REAL" \]/)
-    assert.match(script, /find "\$SESS_REAL" -maxdepth 1 -type f \\\( -name 'Session_\*' -o -name 'Tabs_\*' \\\) -delete/)
+    assert.match(script, /SR_SESS_DIR='\/home\/user\/\.config\/google-chrome\/Default\/Sessions' node -e/)
+    assert.match(script, /O_NOFOLLOW/)
+    assert.match(script, /\/proc\/self\/fd\//)
+    assert.match(script, /st\.uid!==process\.getuid\(\)/)
     // must run before the app is launched
-    assert.ok(script.indexOf("realpath -e") < script.indexOf("SPATH="))
+    assert.ok(script.indexOf("SR_SESS_DIR=") < script.indexOf("SPATH="))
 })
 
-test("buildRestoreScript never shells out a raw rm against the session snapshot", () => {
+test("buildRestoreScript never shells out a raw rm or a separate validate-then-act pathname lookup against the session snapshot", () => {
     // A captured/hand-edited browserProfile must never reach an unguarded
-    // delete - every removal has to go through the realpath+ownership gate.
+    // delete, and the deletion itself must not be a validate-by-pathname-
+    // then-act-by-pathname sequence (realpath/-O/find-by-string) - that has
+    // its own ancestor-swap race between the separate lookups. Every removal
+    // goes through a single open(O_NOFOLLOW) and acts on that descriptor.
     const profile = {
         windows: [{
             class: "google-chrome", title: "x", workspace: "1", monitor: "DP-1",
@@ -516,6 +520,8 @@ test("buildRestoreScript never shells out a raw rm against the session snapshot"
     }
     const { script } = buildRestoreScript(profile, [])
     assert.doesNotMatch(script, /rm -f [^\n]*Session_/)
+    assert.doesNotMatch(script, /realpath -e/)
+    assert.doesNotMatch(script, /find "?\$SESS_REAL/)
 })
 
 test("buildRestoreScript leaves a not-running browser's own restore alone when it has no captured tabs", () => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.4.3] - 2026-09-22
+
+### Security
+
+- **The v2.4.2 fix for the Chromium session-snapshot deletion was itself a validate-then-act race.** `realpath -e`, the ownership test, and `find -delete` were three separate pathname lookups against the same string; an ancestor of that path could in principle be swapped between any of them. Deletion now opens the directory exactly once with `O_NOFOLLOW` (refusing outright if the final component is a symlink), validates ownership on that same open file descriptor via `fstat`, and deletes matching entries through that descriptor (via Linux's `/proc/self/fd/<n>`, since neither Node nor coreutils expose `openat`/`unlinkat` directly) — nothing after the open can be redirected by a later rename or symlink swap. (reported via marketplace review, omacom/omarchy-plugin-marketplace#6398)
+
 ## [2.4.2] - 2026-09-22
 
 ### Security

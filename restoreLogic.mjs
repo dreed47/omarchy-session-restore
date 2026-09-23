@@ -163,24 +163,46 @@ export function classesMatch(a, b) {
 //
 // browserProfile is a captured/saved value, not something this deletion may
 // trust directly: it is read back from a session file on disk (editable) and
-// this runs unattended at login/reboot restore, so it is re-resolved and
-// re-validated right here, at the moment of deletion, rather than trusting
-// whatever it resolved to at capture time. `realpath -e` collapses any `..`
-// or symlink hops and requires the result to actually exist; `-O` then
-// requires that real path be owned by the user running this restore. Only
-// then does `find -type f` (never dereferences a symlink for its own name)
-// delete the two known snapshot filename patterns - so neither a spoofed
-// profile path nor a symlink planted between capture and restore can redirect
-// the delete anywhere else. Any failure at any step is a silent no-op.
+// this runs unattended at login/reboot restore, so an ancestor of the path
+// could in principle be swapped between any validation step and the actual
+// delete. A validate-then-act sequence built from separate pathname lookups
+// (realpath, then a permission test, then `find`/`rm` on the same string)
+// cannot close that gap - each lookup re-resolves the path from scratch and
+// can observe a different filesystem state. This instead opens the
+// directory exactly once, with O_NOFOLLOW so a symlink at the final
+// component is refused outright, then validates and deletes through that
+// SAME open file descriptor (via Linux's /proc/self/fd/<n>, since neither
+// Node nor coreutils expose openat/unlinkat directly) - so nothing after the
+// open can be redirected by an ancestor being renamed or replaced out from
+// under it. Node is already a hard dependency of this plugin. Deletion is
+// further limited to entries that fstat/lstat as regular files matching the
+// two known snapshot name patterns; a same-named symlink is left untouched.
+// Any failure at any step is a silent no-op, same as before.
 export function clearChromiumSessionSnapshotLines(browserProfile, cls) {
     if (!browserProfile || browserTypeForClass(cls) !== "chromium") return []
     var base = String(browserProfile).replace(/\/$/, "")
-    var sessionsQ = shellArg(base + "/Default/Sessions")
+    var sessionsDir = base + "/Default/Sessions"
+    var js = '(function(){' +
+        'var fs=require("fs");' +
+        'var dir=process.env.SR_SESS_DIR;' +
+        'var fd;' +
+        'try{fd=fs.openSync(dir,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW)}catch(e){return}' +
+        'try{' +
+        'var st=fs.fstatSync(fd);' +
+        'if(st.uid!==process.getuid())return;' +
+        'var base="/proc/self/fd/"+fd;' +
+        'var names;' +
+        'try{names=fs.readdirSync(base)}catch(e){return}' +
+        'for(var i=0;i<names.length;i++){' +
+        'var n=names[i];' +
+        'if(!/^(Session_|Tabs_)/.test(n))continue;' +
+        'var p=base+"/"+n;' +
+        'try{if(fs.lstatSync(p).isFile())fs.unlinkSync(p)}catch(e){}' +
+        '}' +
+        '}finally{try{fs.closeSync(fd)}catch(e){}}' +
+        '})();'
     return [
-        "SESS_REAL=$(realpath -e " + sessionsQ + " 2>/dev/null) || SESS_REAL=",
-        'if [ -n "$SESS_REAL" ] && [ -d "$SESS_REAL" ] && [ -O "$SESS_REAL" ]; then',
-        "  find \"$SESS_REAL\" -maxdepth 1 -type f \\( -name 'Session_*' -o -name 'Tabs_*' \\) -delete 2>/dev/null || true",
-        "fi",
+        "SR_SESS_DIR=" + shellArg(sessionsDir) + " node -e " + shellArg(js) + " 2>/dev/null || true",
     ]
 }
 
